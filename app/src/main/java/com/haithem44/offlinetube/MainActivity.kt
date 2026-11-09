@@ -449,4 +449,48 @@ class MainActivity : Activity() {
                 )
             } catch (e: Exception) { null }
             if (bmp != null) {
-                ThumbnailCache.put(v.id, bmp
+                ThumbnailCache.put(v.id, bmp)
+                runOnUiThread {
+                    if (img.tag == v.id) img.setImageBitmap(bmp)
+                }
+            }
+        }
+    }
+
+    private fun loadVideos() {
+        allVideos.clear()
+        val proj = arrayOf(
+            MediaStore.Video.Media._ID,
+            MediaStore.Video.Media.DISPLAY_NAME,
+            MediaStore.Video.Media.DURATION
+        )
+        contentResolver.query(
+            MediaStore.Video.Media.EXTERNAL_CONTENT_URI, proj, null, null,
+            MediaStore.Video.Media.DATE_ADDED + " DESC"
+        )?.use { c ->
+            while (c.moveToNext()) {
+                val id = c.getLong(0)
+                allVideos.add(
+                    Vid(
+                        id,
+                        (c.getString(1) ?: "video").substringBeforeLast('.'),
+                        c.getLong(2),
+                        ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
+                    )
+                )
+            }
+        }
+        applyFilter(input.text.toString())
+        if (allVideos.isEmpty())
+            Toast.makeText(this, "لا توجد فيديوهات على الهاتف", Toast.LENGTH_LONG).show()
+    }
+
+    private fun fmt(ms: Long): String {
+        val s = ms / 1000
+        val h = s / 3600
+        val m = (s % 3600) / 60
+        val sec = s % 60
+        return if (h > 0) String.format("%d:%02d:%02d", h, m, sec)
+        else String.format("%d:%02d", m, sec)
+    }
+}
