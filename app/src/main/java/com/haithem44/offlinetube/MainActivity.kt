@@ -147,47 +147,4 @@ class MainActivity : Activity() {
                 val h = view.tag as RowHolder
                 for (i in h.cells.indices) {
                     val c = h.cells[i]
-                    if (i < row.items.size) {
-                        c.root.visibility = View.VISIBLE
-                        bind(c, row.items[i])
-                    } else {
-                        c.root.visibility = View.INVISIBLE
-                        c.root.setOnClickListener(null)
-                    }
-                }
-                return view
-            }
-        }
-        listView.adapter = adapter
-
-        input.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-            override fun afterTextChanged(s: Editable?) {
-                applyFilter(s?.toString() ?: "")
-            }
-        })
-        input.setOnEditorActionListener { _, actionId, _ ->
-            if (actionId == EditorInfo.IME_ACTION_SEARCH) {
-                hideKb()
-                true
-            } else false
-        }
-        searchIcon.setOnClickListener {
-            if (searchBar.visibility == View.VISIBLE) {
-                input.setText("")
-                searchBar.visibility = View.GONE
-                hideKb()
-            } else {
-                searchBar.visibility = View.VISIBLE
-                input.requestFocus()
-                input.post {
-                    val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-                    imm.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
-                }
-            }
-        }
-
-        val perm = if (Build.VERSION.SDK_INT >= 33)
-            Manifest.permission.READ_MEDIA_VIDEO
-        else Manifest.
+                    if (i
