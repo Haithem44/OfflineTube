@@ -47,10 +47,10 @@ data class Cell(
 
 data class RowHolder(val cells: List<Cell>)
 
-// --- Custom Professional Logo View (OfflineTube Brand) ---
+// --- Custom Professional Modern Logo View ---
 class AppLogoView(c: Context) : View(c) {
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#E50914") // لون ترويجي احترافي (أحمر أنيق)
+        color = Color.parseColor("#FF3B30") // أحمر حيوي ومشرق
         style = Paint.Style.FILL
     }
     private val playPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -62,15 +62,15 @@ class AppLogoView(c: Context) : View(c) {
         super.onDraw(canvas)
         val w = width.toFloat()
         val h = height.toFloat()
-        val radius = Math.min(w, h) * 0.45f
+        val radius = Math.min(w, h) * 0.48f
         
         // رسم خلفية دائرية متناسقة للشعار
         canvas.drawCircle(w / 2f, h / 2f, radius, bgPaint)
 
-        // رسم أيقونة التشغيل بشكل هندسي دقيق داخل الدائرة
+        // رسم أيقونة التشغيل بشكل هندسي دقيق
         val path = android.graphics.Path().apply {
             moveTo(w * 0.38f, h * 0.30f)
-            lineTo(w * 0.70f, h * 0.50f)
+            lineTo(w * 0.72f, h * 0.50f)
             lineTo(w * 0.38f, h * 0.70f)
             close()
         }
@@ -78,10 +78,10 @@ class AppLogoView(c: Context) : View(c) {
     }
 }
 
-// --- Custom Search Icon ---
+// --- Custom Search Icon (Dark Version for Bright Theme) ---
 class SearchIcon(c: Context) : View(c) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
+        color = Color.parseColor("#333333")
         style = Paint.Style.STROKE
         strokeWidth = 5f
         strokeCap = Paint.Cap.ROUND
@@ -130,8 +130,10 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val bg = Color.parseColor("#0F0F0F")
-        window.statusBarColor = bg
+        
+        // خلفية فاتحة ومشرقة وأنيقة (Bright Theme)
+        val bg = Color.parseColor("#F4F6F9")
+        window.statusBarColor = Color.parseColor("#E9ECEF")
         window.navigationBarColor = bg
 
         val root = LinearLayout(this).apply {
@@ -140,11 +142,12 @@ class MainActivity : Activity() {
             fitsSystemWindows = true
         }
 
-        // --- تصميم الهيدر الاحترافي (الشعار الجديد بجانب العنوان وأيقونة البحث) ---
+        // --- الهيدر الجديد الاحترافي والمشرق ---
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(16), dp(8), dp(8), dp(8))
+            setPadding(dp(16), dp(10), dp(12), dp(10))
+            setBackgroundColor(Color.parseColor("#FFFFFF"))
         }
 
         val logoContainer = LinearLayout(this).apply {
@@ -154,37 +157,38 @@ class MainActivity : Activity() {
         
         val logoIcon = AppLogoView(this)
         val brandTitle = TextView(this).apply {
-            text = " OfflineTube"
-            setTextColor(Color.WHITE)
-            textSize = 20f
+            text = " Media Vault"
+            setTextColor(Color.parseColor("#1A1A1A"))
+            textSize = 19f
             setTypeface(null, android.graphics.Typeface.BOLD)
-            letterSpacing = 0.03f
+            letterSpacing = 0.02f
         }
 
-        logoContainer.addView(logoIcon, LinearLayout.LayoutParams(dp(32), dp(32)))
+        logoContainer.addView(logoIcon, LinearLayout.LayoutParams(dp(36), dp(36)))
         logoContainer.addView(brandTitle, LinearLayout.LayoutParams(-2, -2))
 
         val searchIcon = SearchIcon(this).apply { isClickable = true }
         
         header.addView(logoContainer, LinearLayout.LayoutParams(0, -2, 1f))
-        header.addView(searchIcon, LinearLayout.LayoutParams(dp(42), dp(42)))
+        header.addView(searchIcon, LinearLayout.LayoutParams(dp(40), dp(40)))
 
         searchBar = LinearLayout(this).apply {
             visibility = View.GONE
-            setPadding(dp(12), 0, dp(12), dp(8))
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            setBackgroundColor(Color.parseColor("#FFFFFF"))
         }
         input = EditText(this).apply {
             hint = "ابحث عن فيديو..."
             setHintTextColor(Color.parseColor("#888888"))
-            setTextColor(Color.WHITE)
+            setTextColor(Color.parseColor("#1A1A1A"))
             textSize = 15f
             isSingleLine = true
             imeOptions = EditorInfo.IME_ACTION_SEARCH
             background = GradientDrawable().apply {
-                setColor(Color.parseColor("#272727"))
+                setColor(Color.parseColor("#E9ECEF"))
                 cornerRadius = dp(22).toFloat()
             }
-            setPadding(dp(16), dp(8), dp(16), dp(8))
+            setPadding(dp(16), dp(10), dp(16), dp(10))
         }
         searchBar.addView(input, LinearLayout.LayoutParams(-1, -2))
 
@@ -195,7 +199,7 @@ class MainActivity : Activity() {
         }
         emptyText = TextView(this).apply {
             text = "لا توجد نتائج"
-            setTextColor(Color.parseColor("#AAAAAA"))
+            setTextColor(Color.parseColor("#666666"))
             textSize = 16f
             visibility = View.GONE
         }
@@ -361,14 +365,14 @@ class MainActivity : Activity() {
         val frame = FrameLayout(this)
         val img = ImageView(this).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
-            setBackgroundColor(Color.parseColor("#222222"))
+            setBackgroundColor(Color.parseColor("#E0E0E0"))
         }
         frame.addView(img, FrameLayout.LayoutParams(-1, -1))
 
         val dur = TextView(this).apply {
             setTextColor(Color.WHITE)
             textSize = if (small) 10f else 12f
-            setBackgroundColor(Color.parseColor("#CC000000"))
+            setBackgroundColor(Color.parseColor("#AA000000"))
             setPadding(dp(5), dp(1), dp(5), dp(1))
         }
         val dlp = FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.END)
@@ -379,7 +383,7 @@ class MainActivity : Activity() {
             text = "✓ شوهد"
             setTextColor(Color.WHITE)
             textSize = if (small) 9f else 11f
-            setBackgroundColor(Color.parseColor("#CC000000"))
+            setBackgroundColor(Color.parseColor("#AA000000"))
             setPadding(dp(5), dp(1), dp(5), dp(1))
             visibility = View.GONE
         }
@@ -393,7 +397,7 @@ class MainActivity : Activity() {
             setBackgroundColor(Color.parseColor("#66FFFFFF"))
             visibility = View.GONE
         }
-        val red = View(this).apply { setBackgroundColor(Color.parseColor("#FF0000")) }
+        val red = View(this).apply { setBackgroundColor(Color.parseColor("#FF3B30")) }
         val rest = View(this)
         track.addView(red, LinearLayout.LayoutParams(0, -1, 0f))
         track.addView(rest, LinearLayout.LayoutParams(0, -1, 1000f))
@@ -415,17 +419,25 @@ class MainActivity : Activity() {
             2 -> 14f
             else -> 12f
         }
+        // عناوين واضحة ومناسبة للخلفية الفاتحة
         val title = TextView(this).apply {
-            setTextColor(Color.WHITE)
+            setTextColor(Color.parseColor("#212529"))
             textSize = ts
             maxLines = if (style == 2) 3 else 2
             ellipsize = TextUtils.TruncateAt.END
         }
 
-        val root = LinearLayout(this)
+        val root = LinearLayout(this).apply {
+            setBackgroundColor(Color.parseColor("#FFFFFF"))
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#FFFFFF"))
+                cornerRadius = dp(8).toFloat()
+            }
+        }
+        
         if (style == 2) {
             root.orientation = LinearLayout.HORIZONTAL
-            root.setPadding(dp(12), dp(6), dp(12), dp(6))
+            root.setPadding(dp(12), dp(8), dp(12), dp(8))
             root.addView(frame, LinearLayout.LayoutParams(dp(160), dp(92)))
             title.setPadding(dp(10), 0, 0, 0)
             root.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
@@ -437,8 +449,8 @@ class MainActivity : Activity() {
                 else -> dp(200)
             }
             root.addView(frame, LinearLayout.LayoutParams(-1, h))
-            val side = if (style == 0) dp(12) else dp(4)
-            title.setPadding(side, dp(6), side, dp(6))
+            val side = if (style == 0) dp(12) else dp(6)
+            title.setPadding(side, dp(8), side, dp(8))
             root.addView(title, LinearLayout.LayoutParams(-1, -2))
         }
         return Cell(root, img, dur, title, track, red, rest, badge)
