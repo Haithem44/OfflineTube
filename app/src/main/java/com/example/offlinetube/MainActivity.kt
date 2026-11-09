@@ -41,7 +41,7 @@ fun MainScreen() {
     var selectedVideo by remember { mutableStateOf<Uri?>(null) }
 
     // منتقي ملفات يتيح اختيار عدة فيديوهات دفعة واحدة
-    constval multipleFilesLauncher = rememberLauncherForActivityResult(
+    val multipleFilesLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetMultipleContents()
     ) { uris: List<Uri> ->
         for (uri in uris) {
@@ -58,7 +58,7 @@ fun MainScreen() {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF0F0F0F)) // خلفية يوتيوب الداكنة الرسمية
+            .background(Color(0xFF0F0F0F))
     ) {
         // شريط التنقل العلوي بتصميم يوتيوب
         Row(
@@ -76,9 +76,9 @@ fun MainScreen() {
             )
             Button(
                 onClick = { multipleFilesLauncher.launch("video/*") },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF0000)) // أحمر يوتيوب المميز
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF0000))
             ) {
-                Text(text = "إضافة فيديوهات دفعة واحدة 📥", color = Color.White)
+                Text(text = "إضافة فيديوهات 📥", color = Color.White)
             }
         }
 
@@ -91,7 +91,7 @@ fun MainScreen() {
             HorizontalDivider(color = Color(0xFF272727))
         }
 
-        // قائمة الفيديوهات بتصميم شبيه بيوتيوب تماماً
+        // قائمة الفيديوهات بتصميم شبيه بيوتيوب
         LazyColumn(
             modifier = Modifier.fillMaxSize()
         ) {
@@ -103,7 +103,6 @@ fun MainScreen() {
                         .padding(12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // صندوق الصورة المصغرة للفيديو
                     Box(
                         modifier = Modifier
                             .width(130.dp)
@@ -116,7 +115,6 @@ fun MainScreen() {
 
                     Spacer(modifier = Modifier.width(12.dp))
 
-                    // تفاصيل الفيديو (العنوان، اسم القناة، ووقت النشر)
                     Column(
                         modifier = Modifier.weight(1f)
                     ) {
