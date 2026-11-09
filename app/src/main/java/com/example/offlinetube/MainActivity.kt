@@ -32,7 +32,7 @@ class MainActivity : ComponentActivity() {
 fun MainScreen() {
     var selectedFileUri by remember { mutableStateOf<Uri?>(null) }
 
-    // منتقي الملفات المتوافق مع أندرويد الحديث
+    // منتقي الملفات الشامل لجميع الملفات
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -53,10 +53,10 @@ fun MainScreen() {
         Spacer(modifier = Modifier.height(16.dp))
         
         Button(onClick = {
-            // فتح واجهة اختيار ملفات الفيديو (يمكنك تغيير "video/*" إلى "*/*" لاختيار أي ملف)
-            filePickerLauncher.launch("video/*")
+            // السماح باختيار أي ملف من الجهاز بدون قيود
+            filePickerLauncher.launch("*/*")
         }) {
-            Text(text = "اختر فيديو من الجهاز")
+            Text(text = "اختر ملفاً من الجهاز")
         }
         
         Spacer(modifier = Modifier.height(16.dp))
