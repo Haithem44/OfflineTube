@@ -47,6 +47,37 @@ data class Cell(
 
 data class RowHolder(val cells: List<Cell>)
 
+// --- Custom Professional Logo View (OfflineTube Brand) ---
+class AppLogoView(c: Context) : View(c) {
+    private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#E50914") // لون ترويجي احترافي (أحمر أنيق)
+        style = Paint.Style.FILL
+    }
+    private val playPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        style = Paint.Style.FILL
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        val w = width.toFloat()
+        val h = height.toFloat()
+        val radius = Math.min(w, h) * 0.45f
+        
+        // رسم خلفية دائرية متناسقة للشعار
+        canvas.drawCircle(w / 2f, h / 2f, radius, bgPaint)
+
+        // رسم أيقونة التشغيل بشكل هندسي دقيق داخل الدائرة
+        val path = android.graphics.Path().apply {
+            moveTo(w * 0.38f, h * 0.30f)
+            lineTo(w * 0.70f, h * 0.50f)
+            lineTo(w * 0.38f, h * 0.70f)
+            close()
+        }
+        canvas.drawPath(path, playPaint)
+    }
+}
+
 // --- Custom Search Icon ---
 class SearchIcon(c: Context) : View(c) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -109,19 +140,34 @@ class MainActivity : Activity() {
             fitsSystemWindows = true
         }
 
+        // --- تصميم الهيدر الاحترافي (الشعار الجديد بجانب العنوان وأيقونة البحث) ---
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(16), dp(6), dp(8), dp(6))
+            setPadding(dp(16), dp(8), dp(8), dp(8))
         }
-        val titleTv = TextView(this).apply {
-            text = "▶ OfflineTube"
+
+        val logoContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        
+        val logoIcon = AppLogoView(this)
+        val brandTitle = TextView(this).apply {
+            text = " OfflineTube"
             setTextColor(Color.WHITE)
-            textSize = 22f
+            textSize = 20f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            letterSpacing = 0.03f
         }
+
+        logoContainer.addView(logoIcon, LinearLayout.LayoutParams(dp(32), dp(32)))
+        logoContainer.addView(brandTitle, LinearLayout.LayoutParams(-2, -2))
+
         val searchIcon = SearchIcon(this).apply { isClickable = true }
-        header.addView(titleTv, LinearLayout.LayoutParams(0, -2, 1f))
-        header.addView(searchIcon, LinearLayout.LayoutParams(dp(44), dp(44)))
+        
+        header.addView(logoContainer, LinearLayout.LayoutParams(0, -2, 1f))
+        header.addView(searchIcon, LinearLayout.LayoutParams(dp(42), dp(42)))
 
         searchBar = LinearLayout(this).apply {
             visibility = View.GONE
