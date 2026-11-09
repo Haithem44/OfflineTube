@@ -19,7 +19,10 @@ import android.widget.*
 import java.util.concurrent.Executors
 
 data class Vid(val id: Long, val title: String, val duration: Long, val uri: Uri)
-class Holder(val img: ImageView, val dur: TextView, val title: TextView)
+class Holder(
+    val img: ImageView, val dur: TextView, val title: TextView,
+    val track: LinearLayout, val red: View, val rest: View, val badge: TextView
+)
 
 class MainActivity : Activity() {
     private val videos = ArrayList<Vid>()
@@ -65,6 +68,22 @@ class MainActivity : Activity() {
                 h.title.text = v.title
                 h.dur.text = fmt(v.duration)
                 h.img.tag = v.id
+
+                val savedDur = Prog.dur(this@MainActivity, v.id)
+                val d = if (savedDur > 0) savedDur else v.duration
+                val pos = Prog.pos(this@MainActivity, v.id)
+                if (pos <= 0 || d <= 0) {
+                    h.track.visibility = View.GONE
+                    h.badge.visibility = View.GONE
+                } else {
+                    val frac = (pos.toDouble() / d).coerceIn(0.0, 1.0)
+                    h.track.visibility = View.VISIBLE
+                    (h.red.layoutParams as LinearLayout.LayoutParams).weight = (frac * 1000).toFloat()
+                    (h.rest.layoutParams as LinearLayout.LayoutParams).weight = (1000 - frac * 1000).toFloat()
+                    h.track.requestLayout()
+                    h.badge.visibility = if (frac > 0.95) View.VISIBLE else View.GONE
+                }
+
                 val b = cache[v.id]
                 if (b != null) {
                     h.img.setImageBitmap(b)
@@ -80,6 +99,7 @@ class MainActivity : Activity() {
             val v = videos[pos]
             startActivity(Intent(this, PlayerActivity::class.java).apply {
                 data = v.uri
+                putExtra("id", v.id)
                 putExtra("title", v.title)
             })
         }
@@ -89,6 +109,11 @@ class MainActivity : Activity() {
         else Manifest.permission.READ_EXTERNAL_STORAGE
         if (checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED) loadVideos()
         else requestPermissions(arrayOf(perm), 1)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::adapter.isInitialized) adapter.notifyDataSetChanged()
     }
 
     override fun onRequestPermissionsResult(rc: Int, p: Array<out String>, r: IntArray) {
@@ -108,6 +133,7 @@ class MainActivity : Activity() {
             setBackgroundColor(Color.parseColor("#222222"))
         }
         frame.addView(img, FrameLayout.LayoutParams(-1, dp(220)))
+
         val dur = TextView(this).apply {
             setTextColor(Color.WHITE)
             textSize = 12f
@@ -115,8 +141,33 @@ class MainActivity : Activity() {
             setPadding(dp(6), dp(2), dp(6), dp(2))
         }
         val lp = FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.END)
-        lp.setMargins(dp(8), dp(8), dp(8), dp(8))
+        lp.setMargins(dp(8), dp(8), dp(8), dp(12))
         frame.addView(dur, lp)
+
+        val badge = TextView(this).apply {
+            text = "✓ شوهد"
+            setTextColor(Color.WHITE)
+            textSize = 11f
+            setBackgroundColor(Color.parseColor("#CC000000"))
+            setPadding(dp(6), dp(2), dp(6), dp(2))
+            visibility = View.GONE
+        }
+        val blp = FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START)
+        blp.setMargins(dp(8), dp(8), dp(8), dp(8))
+        frame.addView(badge, blp)
+
+        val track = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            weightSum = 1000f
+            setBackgroundColor(Color.parseColor("#66FFFFFF"))
+            visibility = View.GONE
+        }
+        val red = View(this).apply { setBackgroundColor(Color.parseColor("#FF0000")) }
+        val rest = View(this)
+        track.addView(red, LinearLayout.LayoutParams(0, -1, 0f))
+        track.addView(rest, LinearLayout.LayoutParams(0, -1, 1000f))
+        frame.addView(track, FrameLayout.LayoutParams(-1, dp(4), Gravity.BOTTOM))
+
         val title = TextView(this).apply {
             setTextColor(Color.WHITE)
             textSize = 15f
@@ -125,7 +176,7 @@ class MainActivity : Activity() {
         }
         root.addView(frame, LinearLayout.LayoutParams(-1, -2))
         root.addView(title, LinearLayout.LayoutParams(-1, -2))
-        root.tag = Holder(img, dur, title)
+        root.tag = Holder(img, dur, title, track, red, rest, badge)
         return root
     }
 
