@@ -7,6 +7,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -44,35 +45,22 @@ fun MainScreen() {
         granted = isGranted
     }
 
-    LaunchedEffect(Unit) {
-        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            Manifest.permission.READ_MEDIA_VIDEO
-        } else {
-            Manifest.permission.READ_EXTERNAL_STORAGE
-        }
-        granted = ContextCompat.checkSelfPermission(
-            android.app.Application(), 
-            permission
-        ) == PackageManager.PERMISSION_GRANTED
-    }
-
-    if (!granted) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Button(onClick = { 
-                val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    Manifest.permission.READ_MEDIA_VIDEO
-                } else {
-                    Manifest.permission.READ_EXTERNAL_STORAGE
-                }
-                launcher.launch(permission)
-            }) {
-                Text("منح صلاحية الوصول للویدوهات")
-            }
-        }
-    } else {
-        // شاشة عرض الفيديوهات
-        Box(Modifier.fillMaxSize()) {
-            // يمكن إضافة محتوى القائمة هنا
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = "OfflineTube App",
+            fontSize = 24.sp
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        Button(onClick = {
+            launcher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        }) {
+            Text(text = "طلب إذن التخزين")
         }
     }
 }
