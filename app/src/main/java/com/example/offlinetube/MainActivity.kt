@@ -19,7 +19,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-data class VideoItem(val title: String, val channel: String, val uri: Uri?)
+data class VideoItem(val title: String, val channel: String, val uri: Uri)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -37,23 +37,30 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun MainScreen() {
-    var videoList = remember { mutableStateListOf<VideoItem>() }
+    val videoList = remember { mutableStateListOf<VideoItem>() }
     var selectedVideo by remember { mutableStateOf<Uri?>(null) }
 
-    val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        uri?.let {
-            videoList.add(VideoItem(title = "فيديو محلي جديد من الجهاز", channel = "OfflineTube Channel", uri = it))
+    // منتقي ملفات يتيح اختيار عدة فيديوهات دفعة واحدة
+    constval multipleFilesLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetMultipleContents()
+    ) { uris: List<Uri> ->
+        for (uri in uris) {
+            videoList.add(
+                VideoItem(
+                    title = "فيديو محلي ${videoList.size + 1}",
+                    channel = "OfflineTube Studio",
+                    uri = uri
+                )
+            )
         }
     }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF121212)) // لون خلفية تشبه يوتيوب الداكن
+            .background(Color(0xFF0F0F0F)) // خلفية يوتيوب الداكنة الرسمية
     ) {
-        // شريط العنوان العلوي
+        // شريط التنقل العلوي بتصميم يوتيوب
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -64,23 +71,27 @@ fun MainScreen() {
             Text(
                 text = "▶️ OfflineTube",
                 color = Color.White,
-                fontSize = 20.sp
+                fontSize = 22.sp,
+                style = MaterialTheme.typography.titleLarge
             )
-            Button(onClick = { filePickerLauncher.launch("video/*") }) {
-                Text(text = "إضافة فيديو +")
+            Button(
+                onClick = { multipleFilesLauncher.launch("video/*") },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF0000)) // أحمر يوتيوب المميز
+            ) {
+                Text(text = "إضافة فيديوهات دفعة واحدة 📥", color = Color.White)
             }
         }
 
-        // إذا تم اختيار فيديو للعرض، يظهر المشغل في الأعلى
+        // عرض مشغل الفيديو في الأعلى عند الضغط على أي فيديو
         selectedVideo?.let { uri ->
             PlayerBox(
                 videoUri = uri,
                 modifier = Modifier.padding(bottom = 8.dp)
             )
-            HorizontalDivider(color = Color.DarkGray)
+            HorizontalDivider(color = Color(0xFF272727))
         }
 
-        // قائمة الفيديوهات على شكل يوتيوب
+        // قائمة الفيديوهات بتصميم شبيه بيوتيوب تماماً
         LazyColumn(
             modifier = Modifier.fillMaxSize()
         ) {
@@ -92,19 +103,20 @@ fun MainScreen() {
                         .padding(12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // صندوق مصغر يمثل الصورة المصغرة للفيديو
+                    // صندوق الصورة المصغرة للفيديو
                     Box(
                         modifier = Modifier
-                            .width(120.dp)
-                            .height(70.dp)
-                            .background(Color.DarkGray),
+                            .width(130.dp)
+                            .height(75.dp)
+                            .background(Color(0xFF272727)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(text = "▶️", color = Color.White)
+                        Text(text = "▶️ فيديو", color = Color.LightGray, fontSize = 12.sp)
                     }
 
                     Spacer(modifier = Modifier.width(12.dp))
 
+                    // تفاصيل الفيديو (العنوان، اسم القناة، ووقت النشر)
                     Column(
                         modifier = Modifier.weight(1f)
                     ) {
@@ -116,8 +128,8 @@ fun MainScreen() {
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "${item.channel} • قبل قليل",
-                            color = Color.Gray,
+                            text = "${item.channel} • مشاهدة الآن",
+                            color = Color(0xFFAAAAAA),
                             fontSize = 12.sp
                         )
                     }
