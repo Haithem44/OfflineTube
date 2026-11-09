@@ -47,7 +47,7 @@ data class Cell(
 
 data class RowHolder(val cells: List<Cell>)
 
-// --- YouTube Style Brand Logo View ---
+// --- TUBE TV PRO Professional Brand Logo View ---
 class AppLogoView(c: Context) : View(c) {
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#FF0000") // أحمر يوتيوب الأصلي
@@ -63,11 +63,11 @@ class AppLogoView(c: Context) : View(c) {
         val w = width.toFloat()
         val h = height.toFloat()
         
-        // تصميم أيقونة يوتيوب المستطيلة ذات الحواف المنحنية
+        // تصميم أيقونة مستطيلة ذات حواف دائرية
         val rect = android.graphics.RectF(w * 0.05f, h * 0.2f, w * 0.95f, h * 0.8f)
         canvas.drawRoundRect(rect, dp(6).toFloat(), dp(6).toFloat(), bgPaint)
 
-        // مثلث التشغيل الأبيض في المنتصف
+        // مثلث التشغيل الأبيض
         val path = android.graphics.Path().apply {
             moveTo(w * 0.40f, h * 0.35f)
             lineTo(w * 0.68f, h * 0.50f)
@@ -133,7 +133,6 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // لون خلفية يوتيوب الداكن الأصلي (#0F0F0F)
         val bg = Color.parseColor("#0F0F0F")
         window.statusBarColor = bg
         window.navigationBarColor = bg
@@ -144,34 +143,59 @@ class MainActivity : Activity() {
             fitsSystemWindows = true
         }
 
-        // --- هيدر يوتيوب العلوي الاحترافي ---
-        val header = LinearLayout(this).apply {
+        // --- شريط علوي يحوي الشعار والعبارة الإسلامية ---
+        val topBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(16), dp(8), dp(12), dp(8))
+            setPadding(dp(16), dp(6), dp(16), dp(2))
             setBackgroundColor(bg)
         }
 
-        val logoContainer = LinearLayout(this).apply {
+        val brandLayout = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        
+
         val logoIcon = AppLogoView(this)
-        val brandTitle = TextView(this).apply {
-            text = " Media Vault"
+        val appTitle = TextView(this).apply {
+            text = " TUBE TV PRO"
             setTextColor(Color.WHITE)
-            textSize = 20f
+            textSize = 18f
             setTypeface(null, android.graphics.Typeface.BOLD)
-            letterSpacing = 0.02f
+            letterSpacing = 0.03f
         }
 
-        logoContainer.addView(logoIcon, LinearLayout.LayoutParams(dp(40), dp(28)))
-        logoContainer.addView(brandTitle, LinearLayout.LayoutParams(-2, -2))
+        brandLayout.addView(logoIcon, LinearLayout.LayoutParams(dp(36), dp(26)))
+        brandLayout.addView(appTitle, LinearLayout.LayoutParams(-2, -2))
+
+        // عبارة لا إله إلا الله محمد رسول الله بتصميم احترافي في الأعلى
+        val islamicTv = TextView(this).apply {
+            text = "لا إله إلا الله محمد رسول الله"
+            setTextColor(Color.parseColor("#AAAAAA"))
+            textSize = 11f
+            gravity = Gravity.END
+        }
+
+        topBar.addView(brandLayout, LinearLayout.LayoutParams(0, -2, 1f))
+        topBar.addView(islamicTv, LinearLayout.LayoutParams(-2, -2))
+
+        // --- هيدر يوتيوب الرئيسي (عنوان/شعار إضافي مع زر البحث) ---
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(16), dp(4), dp(12), dp(8))
+            setBackgroundColor(bg)
+        }
+
+        val subTitle = TextView(this).apply {
+            text = "الفيديوهات المحلية"
+            setTextColor(Color.parseColor("#888888"))
+            textSize = 13f
+        }
 
         val searchIcon = SearchIcon(this).apply { isClickable = true }
         
-        header.addView(logoContainer, LinearLayout.LayoutParams(0, -2, 1f))
+        header.addView(subTitle, LinearLayout.LayoutParams(0, -2, 1f))
         header.addView(searchIcon, LinearLayout.LayoutParams(dp(40), dp(40)))
 
         // شريط البحث المنسدل
@@ -195,7 +219,7 @@ class MainActivity : Activity() {
         }
         searchBar.addView(input, LinearLayout.LayoutParams(-1, -2))
 
-        // القائمة الرئيسية مع دعم التمرير السلس والنزول لأسفل الصفحة
+        // القائمة الرئيسية مع دعم النزول لأسفل والتمرير السلس
         listView = ListView(this).apply {
             divider = null
             dividerHeight = 0
@@ -215,6 +239,7 @@ class MainActivity : Activity() {
             addView(emptyText, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
         }
 
+        root.addView(topBar)
         root.addView(header)
         root.addView(searchBar)
         root.addView(listFrame, LinearLayout.LayoutParams(-1, 0, 1f))
