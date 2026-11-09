@@ -366,4 +366,87 @@ class MainActivity : Activity() {
         val ts = when (style) {
             0 -> 15f
             1 -> 13f
-            2 -> 
+            2 -> 14f
+            else -> 12f
+        }
+        val title = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            textSize = ts
+            maxLines = if (style == 2) 3 else 2
+            ellipsize = TextUtils.TruncateAt.END
+        }
+
+        val root = LinearLayout(this)
+        if (style == 2) {
+            root.orientation = LinearLayout.HORIZONTAL
+            root.setPadding(dp(12), dp(6), dp(12), dp(6))
+            root.addView(frame, LinearLayout.LayoutParams(dp(160), dp(92)))
+            title.setPadding(dp(10), 0, 0, 0)
+            root.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
+        } else {
+            root.orientation = LinearLayout.VERTICAL
+            val h = when (style) {
+                0 -> dp(220)
+                1 -> dp(115)
+                else -> dp(200)
+            }
+            root.addView(frame, LinearLayout.LayoutParams(-1, h))
+            val side = if (style == 0) dp(12) else dp(4)
+            title.setPadding(side, dp(6), side, dp(6))
+            root.addView(title, LinearLayout.LayoutParams(-1, -2))
+        }
+        return Cell(root, img, dur, title, track, red, rest, badge)
+    }
+
+    private fun bind(c: Cell, v: Vid) {
+        c.title.text = v.title
+        c.dur.text = fmt(v.duration)
+        c.img.tag = v.id
+
+        val savedDur = Prog.dur(this, v.id)
+        val d = if (savedDur > 0) savedDur else v.duration
+        val pos = Prog.pos(this, v.id)
+        if (pos <= 0 || d <= 0) {
+            c.track.visibility = View.GONE
+            c.badge.visibility = View.GONE
+        } else {
+            val frac = (pos.toDouble() / d).coerceIn(0.0, 1.0)
+            c.track.visibility = View.VISIBLE
+            val redParams = c.red.layoutParams as LinearLayout.LayoutParams
+            val restParams = c.rest.layoutParams as LinearLayout.LayoutParams
+            redParams.weight = (frac * 1000).toFloat()
+            restParams.weight = (1000 - frac * 1000).toFloat()
+            c.track.requestLayout()
+            c.badge.visibility = if (frac > 0.95) View.VISIBLE else View.GONE
+        }
+
+        c.root.setOnClickListener {
+            hideKb()
+            startActivity(Intent(this, PlayerActivity::class.java).apply {
+                data = v.uri
+                putExtra("id", v.id)
+                putExtra("title", v.title)
+            })
+        }
+
+        val b = ThumbnailCache.get(v.id)
+        if (b != null) {
+            c.img.setImageBitmap(b)
+        } else {
+            c.img.setImageDrawable(null)
+            loadThumb(v, c.img)
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun loadThumb(v: Vid, img: ImageView) {
+        pool.execute {
+            val bmp: Bitmap? = try {
+                if (Build.VERSION.SDK_INT >= 29)
+                    contentResolver.loadThumbnail(v.uri, Size(480, 270), null)
+                else MediaStore.Video.Thumbnails.getThumbnail(
+                    contentResolver, v.id, MediaStore.Video.Thumbnails.MINI_KIND, null
+                )
+            } catch (e: Exception) { null }
+            if (bmp != null) {
+                ThumbnailCache.put(v.id, bmp
