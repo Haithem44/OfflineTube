@@ -19,7 +19,7 @@ android {
     
     composeOptions { 
         // قد تحتاج لتعديل هذا السطر ليتطابق مع إصدار الكوتلن لديك
-        kotlinCompilerExtensionVersion = "1.5.8" 
+        kotlinCompilerExtensionVersion = "1.5.14" 
     }
     
     compileOptions {
