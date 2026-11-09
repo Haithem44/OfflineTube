@@ -7,6 +7,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border // <--- تم إضافة هذا السطر
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -63,9 +64,7 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun YouTubeCloneScreen() {
-    // قائمة الفيديوهات (تبدأ فارغة)
     val videoList = remember { mutableStateListOf<VideoItem>() }
-    // متغير لحفظ الفيديو الذي يتم تشغيله حالياً
     var playingVideoUri by remember { mutableStateOf<Uri?>(null) }
 
     val multipleFilesLauncher = rememberLauncherForActivityResult(
@@ -85,14 +84,12 @@ fun YouTubeCloneScreen() {
         }
     }
 
-    // إذا كان هناك فيديو قيد التشغيل، اعرض مشغل الفيديو
     if (playingVideoUri != null) {
         VideoPlayerScreen(
             videoUri = playingVideoUri!!,
             onBack = { playingVideoUri = null }
         )
     } else {
-        // وإلا، اعرض الواجهة الرئيسية
         Scaffold(
             containerColor = YouTubeBlack,
             topBar = { YouTubeTopBar() },
@@ -108,7 +105,6 @@ fun YouTubeCloneScreen() {
             }
         ) { paddingValues ->
             if (videoList.isEmpty()) {
-                // شاشة فارغة إذا لم يتم اختيار فيديوهات
                 Box(
                     modifier = Modifier.fillMaxSize().padding(paddingValues),
                     contentAlignment = Alignment.Center
@@ -127,7 +123,6 @@ fun YouTubeCloneScreen() {
                 ) {
                     items(videoList) { video ->
                         YouTubeVideoCard(video) {
-                            // عند الضغط على الفيديو، يتم تشغيله
                             playingVideoUri = video.uri
                         }
                     }
@@ -137,21 +132,17 @@ fun YouTubeCloneScreen() {
     }
 }
 
-// شاشة مشغل الفيديو
 @Composable
 fun VideoPlayerScreen(videoUri: Uri, onBack: () -> Unit) {
     val context = LocalContext.current
-    
-    // تهيئة مشغل ExoPlayer
     val exoPlayer = remember {
         ExoPlayer.Builder(context).build().apply {
             setMediaItem(MediaItem.fromUri(videoUri))
             prepare()
-            playWhenReady = true // تشغيل تلقائي
+            playWhenReady = true
         }
     }
 
-    // إغلاق المشغل عند الخروج من الشاشة
     DisposableEffect(Unit) {
         onDispose {
             exoPlayer.release()
@@ -159,7 +150,6 @@ fun VideoPlayerScreen(videoUri: Uri, onBack: () -> Unit) {
     }
 
     Column(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-        // شريط علوي لمشغل الفيديو
         Row(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -170,7 +160,6 @@ fun VideoPlayerScreen(videoUri: Uri, onBack: () -> Unit) {
             Text(text = "تشغيل الفيديو", color = Color.White, fontSize = 18.sp)
         }
 
-        // عرض الفيديو
         AndroidView(
             factory = { ctx ->
                 PlayerView(ctx).apply {
@@ -180,7 +169,7 @@ fun VideoPlayerScreen(videoUri: Uri, onBack: () -> Unit) {
             },
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(16f / 9f) // نسبة أبعاد الفيديو
+                .aspectRatio(16f / 9f)
         )
     }
 }
@@ -258,7 +247,7 @@ fun YouTubeBottomBar() {
     NavigationBar(
         containerColor = YouTubeBlack,
         tonalElevation = 0.dp,
-        modifier = Modifier.border(width = 0.5.dp, color = Color.DarkGray)
+        modifier = Modifier.border(width = 0.5.dp, color = Color.DarkGray) // هنا كان الخطأ
     ) {
         NavigationBarItem(icon = { Icon(Icons.Default.Home, contentDescription = "Home") }, label = { Text("الرئيسية", fontSize = 10.sp) }, selected = true, onClick = { }, colors = NavigationBarItemDefaults.colors(selectedIconColor = Color.White, selectedTextColor = Color.White, unselectedIconColor = YouTubeGray, unselectedTextColor = YouTubeGray, indicatorColor = Color.Transparent))
         NavigationBarItem(icon = { Icon(Icons.Default.PlayArrow, contentDescription = "Shorts") }, label = { Text("Shorts", fontSize = 10.sp) }, selected = false, onClick = { }, colors = NavigationBarItemDefaults.colors(unselectedIconColor = YouTubeGray, unselectedTextColor = YouTubeGray, indicatorColor = Color.Transparent))
