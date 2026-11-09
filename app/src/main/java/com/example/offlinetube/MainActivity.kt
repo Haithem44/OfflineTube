@@ -1,25 +1,18 @@
 package com.example.offlinetube
 
-import android.Manifest
-import android.content.pm.PackageManager
-import android.os.Build
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.ContextCompat
-import coil.compose.AsyncImage
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -37,12 +30,13 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun MainScreen() {
-    var granted by remember { mutableStateOf(false) }
+    var selectedFileUri by remember { mutableStateOf<Uri?>(null) }
 
-    val launcher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        granted = isGranted
+    // منتقي الملفات المتوافق مع أندرويد الحديث
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        selectedFileUri = uri
     }
 
     Column(
@@ -57,10 +51,26 @@ fun MainScreen() {
             fontSize = 24.sp
         )
         Spacer(modifier = Modifier.height(16.dp))
+        
         Button(onClick = {
-            launcher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            // فتح واجهة اختيار ملفات الفيديو (يمكنك تغيير "video/*" إلى "*/*" لاختيار أي ملف)
+            filePickerLauncher.launch("video/*")
         }) {
-            Text(text = "طلب إذن التخزين")
+            Text(text = "اختر فيديو من الجهاز")
+        }
+        
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        if (selectedFileUri != null) {
+            Text(
+                text = "تم اختيار الملف بنجاح ✅",
+                fontSize = 14.sp
+            )
+        } else {
+            Text(
+                text = "لم يتم اختيار أي ملف بعد",
+                fontSize = 14.sp
+            )
         }
     }
 }
