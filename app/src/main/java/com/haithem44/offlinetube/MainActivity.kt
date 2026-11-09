@@ -130,4 +130,240 @@ class MainActivity : Activity() {
         input = EditText(this).apply {
             hint = "ابحث عن فيديو..."
             setHintTextColor(Color.parseColor("#888888"))
-            setTextColor
+            setTextColor(Color.WHITE)
+            textSize = 15f
+            isSingleLine = true
+            imeOptions = EditorInfo.IME_ACTION_SEARCH
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#272727"))
+                cornerRadius = dp(22).toFloat()
+            }
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+        }
+        searchBar.addView(input, LinearLayout.LayoutParams(-1, -2))
+
+        listView = ListView(this).apply {
+            divider = null
+            dividerHeight = 0
+            setBackgroundColor(bg)
+        }
+        emptyText = TextView(this).apply {
+            text = "لا توجد نتائج"
+            setTextColor(Color.parseColor("#AAAAAA"))
+            textSize = 16f
+            visibility = View.GONE
+        }
+        val listFrame = FrameLayout(this).apply {
+            addView(listView, FrameLayout.LayoutParams(-1, -1))
+            addView(emptyText, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+        }
+
+        root.addView(header)
+        root.addView(searchBar)
+        root.addView(listFrame, LinearLayout.LayoutParams(-1, 0, 1f))
+        setContentView(root)
+
+        adapter = object : BaseAdapter() {
+            override fun getCount() = rows.size
+            override fun getItem(p: Int) = rows[p]
+            override fun getItemId(p: Int) = p.toLong()
+            override fun getViewTypeCount() = 4
+            override fun getItemViewType(p: Int) = rows[p].type
+            override fun getView(p: Int, cv: View?, parent: ViewGroup): View {
+                val row = rows[p]
+                val view = cv ?: buildRow(row.type)
+                val h = view.tag as RowHolder
+                for (i in h.cells.indices) {
+                    val c = h.cells[i]
+                    if (i < row.items.size) {
+                        c.root.visibility = View.VISIBLE
+                        bind(c, row.items[i])
+                    } else {
+                        c.root.visibility = View.INVISIBLE
+                        c.root.setOnClickListener(null)
+                    }
+                }
+                return view
+            }
+        }
+        listView.adapter = adapter
+
+        input.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                applyFilter(s?.toString() ?: "")
+            }
+        })
+        input.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_SEARCH) {
+                hideKb()
+                true
+            } else false
+        }
+        searchIcon.setOnClickListener {
+            if (searchBar.visibility == View.VISIBLE) {
+                input.setText("")
+                searchBar.visibility = View.GONE
+                hideKb()
+            } else {
+                searchBar.visibility = View.VISIBLE
+                input.requestFocus()
+                input.post {
+                    val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+                    imm.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
+                }
+            }
+        }
+
+        val perm = if (Build.VERSION.SDK_INT >= 33)
+            Manifest.permission.READ_MEDIA_VIDEO
+        else Manifest.permission.READ_EXTERNAL_STORAGE
+        if (checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED) loadVideos()
+        else requestPermissions(arrayOf(perm), 1)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::adapter.isInitialized) adapter.notifyDataSetChanged()
+    }
+
+    override fun onRequestPermissionsResult(rc: Int, p: Array<out String>, r: IntArray) {
+        super.onRequestPermissionsResult(rc, p, r)
+        if (r.isNotEmpty() && r[0] == PackageManager.PERMISSION_GRANTED) loadVideos()
+        else Toast.makeText(this, "الرجاء السماح بالوصول للفيديوهات", Toast.LENGTH_LONG).show()
+    }
+
+    private fun hideKb() {
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+        imm.hideSoftInputFromWindow(input.windowToken, 0)
+    }
+
+    private fun applyFilter(q: String) {
+        val query = q.trim()
+        val list = if (query.isEmpty()) allVideos
+        else allVideos.filter { it.title.contains(query, ignoreCase = true) }
+        rebuildRows(list, query.isNotEmpty())
+        adapter.notifyDataSetChanged()
+        emptyText.visibility =
+            if (rows.isEmpty() && allVideos.isNotEmpty()) View.VISIBLE else View.GONE
+        if (rows.isNotEmpty()) listView.setSelection(0)
+    }
+
+    private fun rebuildRows(list: List<Vid>, searching: Boolean) {
+        rows.clear()
+        if (searching) {
+            for (v in list) rows.add(Row(2, listOf(v)))
+            return
+        }
+        val pattern = intArrayOf(0, 1, 3, 2, 2)
+        val sizes = intArrayOf(1, 2, 3, 1, 1)
+        var i = 0
+        var k = 0
+        while (i < list.size) {
+            val t = pattern[k % pattern.size]
+            val n = sizes[k % sizes.size]
+            val end = minOf(i + n, list.size)
+            rows.add(Row(t, list.subList(i, end).toList()))
+            i = end
+            k++
+        }
+    }
+
+    private fun buildRow(type: Int): View {
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val cells = ArrayList<Cell>()
+        when (type) {
+            0 -> {
+                val c = buildCell(0)
+                row.setPadding(0, 0, 0, dp(14))
+                row.addView(c.root, LinearLayout.LayoutParams(-1, -2))
+                cells.add(c)
+            }
+            1 -> {
+                row.setPadding(dp(6), 0, dp(6), dp(14))
+                for (i in 0 until 2) {
+                    val c = buildCell(1)
+                    val lp = LinearLayout.LayoutParams(0, -2, 1f)
+                    lp.setMargins(dp(6), 0, dp(6), 0)
+                    row.addView(c.root, lp)
+                    cells.add(c)
+                }
+            }
+            2 -> {
+                val c = buildCell(2)
+                row.addView(c.root, LinearLayout.LayoutParams(-1, -2))
+                cells.add(c)
+            }
+            else -> {
+                row.setPadding(dp(8), 0, dp(8), dp(14))
+                for (i in 0 until 3) {
+                    val c = buildCell(3)
+                    val lp = LinearLayout.LayoutParams(0, -2, 1f)
+                    lp.setMargins(dp(4), 0, dp(4), 0)
+                    row.addView(c.root, lp)
+                    cells.add(c)
+                }
+            }
+        }
+        row.tag = RowHolder(cells)
+        return row
+    }
+
+    private fun buildCell(style: Int): Cell {
+        val small = style != 0
+        val frame = FrameLayout(this)
+        val img = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            setBackgroundColor(Color.parseColor("#222222"))
+        }
+        frame.addView(img, FrameLayout.LayoutParams(-1, -1))
+
+        val dur = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            textSize = if (small) 10f else 12f
+            setBackgroundColor(Color.parseColor("#CC000000"))
+            setPadding(dp(5), dp(1), dp(5), dp(1))
+        }
+        val dlp = FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.END)
+        dlp.setMargins(dp(6), dp(6), dp(6), dp(10))
+        frame.addView(dur, dlp)
+
+        val badge = TextView(this).apply {
+            text = "✓ شوهد"
+            setTextColor(Color.WHITE)
+            textSize = if (small) 9f else 11f
+            setBackgroundColor(Color.parseColor("#CC000000"))
+            setPadding(dp(5), dp(1), dp(5), dp(1))
+            visibility = View.GONE
+        }
+        val blp = FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START)
+        blp.setMargins(dp(6), dp(6), dp(6), dp(6))
+        frame.addView(badge, blp)
+
+        val track = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            weightSum = 1000f
+            setBackgroundColor(Color.parseColor("#66FFFFFF"))
+            visibility = View.GONE
+        }
+        val red = View(this).apply { setBackgroundColor(Color.parseColor("#FF0000")) }
+        val rest = View(this)
+        track.addView(red, LinearLayout.LayoutParams(0, -1, 0f))
+        track.addView(rest, LinearLayout.LayoutParams(0, -1, 1000f))
+        frame.addView(track, FrameLayout.LayoutParams(-1, dp(3), Gravity.BOTTOM))
+
+        if (small) {
+            val r = dp(12).toFloat()
+            frame.outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: Outline) {
+                    outline.setRoundRect(0, 0, view.width, view.height, r)
+                }
+            }
+            frame.clipToOutline = true
+        }
+
+        val ts = when (style) {
+            0 -> 15f
+            1 -> 13f
+            2 -> 
