@@ -9,43 +9,22 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.Outline
 import android.graphics.Paint
-import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
 import android.text.Editable
-import android.text.TextUtils
 import android.text.TextWatcher
 import android.util.LruCache
-import android.util.Size
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.view.ViewOutlineProvider
-import android.view.inputmethod.EditorInfo
-import android.view.inputmethod.InputMethodManager
 import android.widget.*
 import java.util.concurrent.Executors
 
-// --- Data Models ---
+// --- Data Model ---
 data class Vid(val id: Long, val title: String, val duration: Long, val uri: Uri)
-data class Row(val type: Int, val items: List<Vid>)
-
-data class Cell(
-    val root: View,
-    val img: ImageView,
-    val dur: TextView,
-    val title: TextView,
-    val track: LinearLayout,
-    val red: View,
-    val rest: View,
-    val badge: TextView
-)
-
-data class RowHolder(val cells: List<Cell>)
 
 // --- Custom Search Icon ---
 class SearchIcon(c: Context) : View(c) {
@@ -86,14 +65,13 @@ object ThumbnailCache {
 // --- Main Activity ---
 class MainActivity : Activity() {
     private val allVideos = ArrayList<Vid>()
-    private val rows = ArrayList<Row>()
+    private val filteredVideos = ArrayList<Vid>()
     private val pool = Executors.newFixedThreadPool(3)
 
-    private lateinit var adapter: BaseAdapter
+    private lateinit var adapter: ArrayAdapter<Vid>
     private lateinit var input: EditText
     private lateinit var emptyText: TextView
     private lateinit var listView: ListView
-    private lateinit var searchBar: LinearLayout
 
     private fun dp(x: Int) = (x * resources.displayMetrics.density).toInt()
 
@@ -110,20 +88,19 @@ class MainActivity : Activity() {
             fitsSystemWindows = true
         }
 
-        // --- بانر الصورة العلوية ---
+        // 1. صورة البانر (تم حمايتها بـ try-catch في حال عدم وجود الصورة)
         val bannerImageView = ImageView(this).apply {
             scaleType = ImageView.ScaleType.FIT_CENTER
             adjustViewBounds = true
             try {
-                // تم الإصلاح: يجب التأكد من وجود المورد R.drawable.app_banner
                 setImageResource(R.drawable.app_banner)
             } catch (e: Exception) {
-                // في حال عدم وجود الصورة، يتم استخدام لون خلفية بديل
                 setBackgroundColor(Color.parseColor("#1F1F1F"))
             }
         }
+        root.addView(bannerImageView)
 
-        // --- هيدر التطبيق ---
+        // 2. شريط العنوان والبحث
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -138,10 +115,160 @@ class MainActivity : Activity() {
             setTypeface(null, android.graphics.Typeface.BOLD)
         }
 
-        val searchIcon = SearchIcon(this).apply { isClickable = true }
+        val searchIcon = SearchIcon(this).apply { 
+            isClickable = true 
+            setOnClickListener {
+                if (input.visibility == View.GONE) {
+                    input.visibility = View.VISIBLE
+                    input.requestFocus()
+                } else {
+                    input.visibility = View.GONE
+                    input.text.clear()
+                }
+            }
+        }
         
         header.addView(subTitle, LinearLayout.LayoutParams(0, -2, 1f))
         header.addView(searchIcon, LinearLayout.LayoutParams(dp(40), dp(40)))
-        // ... بقية الكود (لم يتم استرجاعه بالكامل)
+        root.addView(header)
+
+        // 3. مربع البحث
+        input = EditText(this).apply {
+            hint = "ابحث عن فيديو..."
+            setHintTextColor(Color.GRAY)
+            setTextColor(Color.WHITE)
+            visibility = View.GONE 
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+            background = null
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                    filterVideos(s.toString())
+                }
+                override fun afterTextChanged(s: Editable?) {}
+            })
+        }
+        root.addView(input)
+
+        // 4. نص يظهر عند عدم وجود فيديوهات
+        emptyText = TextView(this).apply {
+            text = "لا توجد فيديوهات في جهازك"
+            setTextColor(Color.GRAY)
+            textSize = 16f
+            gravity = Gravity.CENTER
+            visibility = View.GONE
+            setPadding(0, dp(32), 0, 0)
+        }
+        root.addView(emptyText)
+
+        // 5. قائمة الفيديوهات
+        listView = ListView(this).apply {
+            divider = null
+            dividerHeight = 0
+        }
+        root.addView(listView, LinearLayout.LayoutParams(-1, -1))
+
+        // إعداد المحول (Adapter) للقائمة
+        adapter = object : ArrayAdapter<Vid>(this, android.R.layout.simple_list_item_1, filteredVideos) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val v = convertView ?: TextView(context).apply {
+                    setPadding(dp(16), dp(24), dp(16), dp(24))
+                    setTextColor(Color.WHITE)
+                    textSize = 16f
+                } as TextView
+                
+                val vid = getItem(position)
+                v.text = vid?.title
+                
+                // الانتقال إلى مشغل الفيديو عند الضغط
+                v.setOnClickListener {
+                    val intent = Intent(this@MainActivity, PlayerActivity::class.java)
+                    intent.putExtra("video_uri", vid?.uri.toString())
+                    intent.putExtra("video_title", vid?.title)
+                    startActivity(intent)
+                }
+                return v
+            }
+        }
+        listView.adapter = adapter
+
+        // إظهار الشاشة أخيراً
+        setContentView(root)
+
+        // طلب الصلاحيات
+        if (checkSelfPermission(if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) Manifest.permission.READ_MEDIA_VIDEO else Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED) {
+            loadVideos()
+        } else {
+            requestPermissions(arrayOf(if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) Manifest.permission.READ_MEDIA_VIDEO else Manifest.permission.READ_EXTERNAL_STORAGE), 1)
+        }
+    }
+
+    // التعامل مع رد المستخدم عند طلب الصلاحيات
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 1 && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            loadVideos()
+        } else {
+            emptyText.text = "تم رفض الصلاحية. لا يمكن تحميل الفيديوهات."
+            emptyText.visibility = View.VISIBLE
+        }
+    }
+
+    // دالة قراءة الفيديوهات من ذاكرة الهاتف
+    private fun loadVideos() {
+        pool.execute {
+            val projection = arrayOf(
+                MediaStore.Video.Media._ID,
+                MediaStore.Video.Media.DISPLAY_NAME,
+                MediaStore.Video.Media.DURATION
+            )
+            val sortOrder = "${MediaStore.Video.Media.DATE_ADDED} DESC"
+
+            val cursor = contentResolver.query(
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                projection,
+                null,
+                null,
+                sortOrder
+            )
+
+            cursor?.use {
+                val idCol = it.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
+                val titleCol = it.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME)
+                val durationCol = it.getColumnIndexOrThrow(MediaStore.Video.Media.DURATION)
+
+                while (it.moveToNext()) {
+                    val id = it.getLong(idCol)
+                    val title = it.getString(titleCol) ?: "فيديو غير معروف"
+                    val duration = it.getLong(durationCol)
+                    val contentUri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
+                    allVideos.add(Vid(id, title, duration, contentUri))
+                }
+            }
+
+            runOnUiThread {
+                filteredVideos.clear()
+                filteredVideos.addAll(allVideos)
+                adapter.notifyDataSetChanged()
+                emptyText.visibility = if (filteredVideos.isEmpty()) View.VISIBLE else View.GONE
+            }
+        }
+    }
+
+    // دالة تصفية الفيديوهات عند البحث
+    private fun filterVideos(query: String) {
+        filteredVideos.clear()
+        if (query.isEmpty()) {
+            filteredVideos.addAll(allVideos)
+        } else {
+            val lowerQuery = query.lowercase()
+            for (vid in allVideos) {
+                if (vid.title.lowercase().contains(lowerQuery)) {
+                    filteredVideos.add(vid)
+                }
+            }
+        }
+        adapter.notifyDataSetChanged()
+        emptyText.visibility = if (filteredVideos.isEmpty()) View.VISIBLE else View.GONE
     }
 }
