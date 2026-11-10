@@ -298,7 +298,7 @@ class MainActivity : Activity() {
             val innerLayout = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
             }
-            horizontalScroll.addView(innerLayout, FrameLayout.LayoutParams(-2, -1))
+            horizontalScroll.addView(innerLayout, ViewGroup.LayoutParams(-2, -1))
             container.addView(titleTv)
             container.addView(horizontalScroll)
             return container
@@ -317,105 +317,3 @@ class MainActivity : Activity() {
                 row.setPadding(dp(6), 0, dp(6), dp(14))
                 for (i in 0 until 2) {
                     val c = buildCell(1)
-                    val lp = LinearLayout.LayoutParams(0, -2, 1f)
-                    lp.setMargins(dp(6), 0, dp(6), 0)
-                    row.addView(c.root, lp)
-                    cells.add(c)
-                }
-            }
-            2 -> {
-                val c = buildCell(2)
-                row.addView(c.root, LinearLayout.LayoutParams(-1, -2))
-                cells.add(c)
-            }
-            else -> {
-                row.setPadding(dp(8), 0, dp(8), dp(14))
-                for (i in 0 until 3) {
-                    val c = buildCell(3)
-                    val lp = LinearLayout.LayoutParams(0, -2, 1f)
-                    lp.setMargins(dp(4), 0, dp(4), 0)
-                    row.addView(c.root, lp)
-                    cells.add(c)
-                }
-            }
-        }
-        row.tag = RowHolder(cells)
-        return row
-    }
-
-    private fun setupShortsRow(rowView: View, items: List<Vid>) {
-        val container = (rowView as LinearLayout).getChildAt(1) as HorizontalScrollView
-        val innerLayout = container.getChildAt(0) as LinearLayout
-        innerLayout.removeAllViews()
-
-        for (v in items) {
-            val shortCard = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(4), 0, dp(4), 0)
-            }
-            val frame = FrameLayout(this)
-            val img = ImageView(this).apply {
-                scaleType = ImageView.ScaleType.CENTER_CROP
-                setBackgroundColor(Color.parseColor("#1F1F1F"))
-                tag = v.id
-            }
-            frame.addView(img, FrameLayout.LayoutParams(dp(110), dp(190)))
-
-            val r = dp(8).toFloat()
-            frame.outlineProvider = object : ViewOutlineProvider() {
-                override fun getOutline(view: View, outline: Outline) {
-                    outline.setRoundRect(0, 0, view.width, view.height, r)
-                }
-            }
-            frame.clipToOutline = true
-
-            val title = TextView(this).apply {
-                text = v.title
-                setTextColor(Color.WHITE)
-                textSize = 12f
-                maxLines = 2
-                ellipsize = TextUtils.TruncateAt.END
-                width = dp(110)
-                setPadding(0, dp(4), 0, 0)
-            }
-
-            shortCard.addView(frame)
-            shortCard.addView(title)
-
-            shortCard.setOnClickListener {
-                hideKb()
-                startActivity(Intent(this, PlayerActivity::class.java).apply {
-                    data = v.uri
-                    putExtra("id", v.id)
-                    putExtra("title", v.title)
-                })
-            }
-
-            val b = ThumbnailCache.get(v.id)
-            if (b != null) {
-                img.setImageBitmap(b)
-            } else {
-                img.setImageDrawable(null)
-                loadThumb(v, img)
-            }
-
-            innerLayout.addView(shortCard)
-        }
-    }
-
-    private fun buildCell(style: Int): Cell {
-        val small = style != 0
-        val frame = FrameLayout(this)
-        val img = ImageView(this).apply {
-            scaleType = ImageView.ScaleType.CENTER_CROP
-            setBackgroundColor(Color.parseColor("#1F1F1F"))
-        }
-        frame.addView(img, FrameLayout.LayoutParams(-1, -1))
-
-        val dur = TextView(this).apply {
-            setTextColor(Color.WHITE)
-            textSize = if (small) 10f else 12f
-            setBackgroundColor(Color.parseColor("#CC000000"))
-            setPadding(dp(5), dp(1), dp(5), dp(1))
-        }
-        val dlp = FrameLayout.LayoutParams
