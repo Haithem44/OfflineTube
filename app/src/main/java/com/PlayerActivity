@@ -1,0 +1,409 @@
+
+package com.haithem44.offlinetube
+
+import android.app.Activity
+import android.graphics.Color
+import android.media.MediaPlayer
+import android.net.Uri
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
+import android.view.WindowManager
+import android.widget.*
+import android.widget.FrameLayout
+
+class PlayerActivity : Activity() {
+
+    private lateinit var videoView: VideoView
+    private lateinit var controls: LinearLayout
+    private lateinit var playButton: TextView
+    private lateinit var seekBar: SeekBar
+    private lateinit var currentTime: TextView
+    private lateinit var totalTime: TextView
+    private lateinit var titleText: TextView
+    private lateinit var fullButton: TextView
+
+    private val handler = Handler(Looper.getMainLooper())
+
+    private var isFullscreen = false
+    private var isSeeking = false
+
+    private val hideRunnable = Runnable {
+        controls.visibility = View.GONE
+    }
+
+    private val updateRunnable = object : Runnable {
+        override fun run() {
+            if (::videoView.isInitialized &&
+                videoView.isPlaying && !isSeeking
+            ) {
+                updateProgress()
+            }
+            handler.postDelayed(this, 500)
+        }
+    }
+
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density).toInt()
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        window.addFlags(
+            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+        )
+
+        val videoUri = intent.getStringExtra("video_uri")
+        val videoTitle =
+            intent.getStringExtra("video_title") ?: "TUBE TV PRO"
+
+        if (videoUri.isNullOrEmpty()) {
+            finish()
+            return
+        }
+
+        val root = FrameLayout(this).apply {
+            setBackgroundColor(Color.BLACK)
+        }
+
+        // شاشة الفيديو
+        videoView = VideoView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                -1, -1, Gravity.CENTER
+            )
+            setBackgroundColor(Color.BLACK)
+        }
+
+        root.addView(videoView)
+
+        // لوحة التحكم
+        controls = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#CC111111"))
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+        }
+
+        val topBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        val backButton = TextView(this).apply {
+            text = "‹"
+            textSize = 38f
+            setTextColor(Color.WHITE)
+            setPadding(dp(8), 0, dp(16), 0)
+            setOnClickListener { finish() }
+        }
+
+        titleText = TextView(this).apply {
+            text = videoTitle
+            textSize = 15f
+            setTextColor(Color.WHITE)
+            maxLines = 1
+            setTypeface(null, android.graphics.Typeface.BOLD)
+        }
+
+        topBar.addView(backButton)
+        topBar.addView(
+            titleText,
+            LinearLayout.LayoutParams(0, -2, 1f)
+        )
+
+        controls.addView(
+            topBar,
+            LinearLayout.LayoutParams(-1, dp(48))
+        )
+
+        // شريط الوقت والتقديم
+        val bottomBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        playButton = TextView(this).apply {
+            text = "▶"
+            textSize = 25f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setPadding(dp(8), dp(8), dp(12), dp(8))
+
+            setOnClickListener {
+                togglePlayback()
+            }
+        }
+
+        currentTime = TextView(this).apply {
+            text = "00:00"
+            textSize = 11f
+            setTextColor(Color.WHITE)
+        }
+
+        seekBar = SeekBar(this).apply {
+            max = 1000
+            progress = 0
+            progressTintList =
+                android.content.res.ColorStateList.valueOf(
+                    Color.RED
+                )
+            thumbTintList =
+                android.content.res.ColorStateList.valueOf(
+                    Color.RED
+                )
+        }
+
+        totalTime = TextView(this).apply {
+            text = "00:00"
+            textSize = 11f
+            setTextColor(Color.WHITE)
+        }
+
+        fullButton = TextView(this).apply {
+            text = "⛶"
+            textSize = 26f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setPadding(dp(10), dp(5), dp(5), dp(5))
+
+            setOnClickListener {
+                toggleFullscreen()
+            }
+        }
+
+        bottomBar.addView(playButton)
+        bottomBar.addView(currentTime)
+
+        bottomBar.addView(
+            seekBar,
+            LinearLayout.LayoutParams(0, dp(35), 1f)
+        )
+
+        bottomBar.addView(totalTime)
+        bottomBar.addView(fullButton)
+
+        controls.addView(
+            bottomBar,
+            LinearLayout.LayoutParams(-1, dp(55))
+        )
+
+        val overlayParams = FrameLayout.LayoutParams(
+            -1, -2, Gravity.BOTTOM
+        )
+
+        root.addView(controls, overlayParams)
+
+        // إظهار الشريط العلوي والسفلي
+        controls.visibility = View.VISIBLE
+
+        root.setOnClickListener {
+            toggleControls()
+        }
+
+        videoView.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_DOWN) {
+                toggleControls()
+            }
+            true
+        }
+
+        // التحكم بالتقديم والتأخير
+        seekBar.setOnSeekBarChangeListener(
+            object : SeekBar.OnSeekBarChangeListener {
+
+                override fun onStartTrackingTouch(
+                    seekBar: SeekBar
+                ) {
+                    isSeeking = true
+                    handler.removeCallbacks(hideRunnable)
+                }
+
+                override fun onProgressChanged(
+                    seekBar: SeekBar,
+                    progress: Int,
+                    fromUser: Boolean
+                ) {
+                    if (fromUser && videoView.duration > 0) {
+                        val position =
+                            videoView.duration.toLong() *
+                                progress / 1000
+
+                        currentTime.text =
+                            formatTime(position.toInt())
+                    }
+                }
+
+                override fun onStopTrackingTouch(
+                    seekBar: SeekBar
+                ) {
+                    if (videoView.duration > 0) {
+                        val position =
+                            videoView.duration.toLong() *
+                                seekBar.progress / 1000
+
+                        videoView.seekTo(position.toInt())
+                    }
+
+                    isSeeking = false
+                    showControls()
+                }
+            }
+        )
+
+        setContentView(root)
+
+        // تحميل وتشغيل الفيديو
+        videoView.setOnPreparedListener { player: MediaPlayer ->
+            player.isLooping = false
+
+            val duration = videoView.duration
+
+            seekBar.max = 1000
+            totalTime.text = formatTime(duration)
+
+            videoView.start()
+            playButton.text = "Ⅱ"
+
+            updateProgress()
+            showControls()
+        }
+
+        videoView.setOnCompletionListener {
+            playButton.text = "▶"
+            seekBar.progress = 1000
+            handler.removeCallbacks(hideRunnable)
+            controls.visibility = View.VISIBLE
+        }
+
+        videoView.setOnErrorListener { _, _, _ ->
+            Toast.makeText(
+                this,
+                "تعذر تشغيل هذا الفيديو",
+                Toast.LENGTH_LONG
+            ).show()
+            true
+        }
+
+        videoView.setVideoURI(Uri.parse(videoUri))
+
+        handler.post(updateRunnable)
+    }
+
+    private fun togglePlayback() {
+        if (videoView.isPlaying) {
+            videoView.pause()
+            playButton.text = "▶"
+        } else {
+            videoView.start()
+            playButton.text = "Ⅱ"
+        }
+
+        showControls()
+    }
+
+    private fun updateProgress() {
+        if (videoView.duration > 0) {
+            val position = videoView.currentPosition
+            val duration = videoView.duration
+
+            currentTime.text = formatTime(position)
+
+            seekBar.progress =
+                ((position.toLong() * 1000) /
+                    duration).toInt()
+        }
+    }
+
+    private fun toggleControls() {
+        if (controls.visibility == View.VISIBLE) {
+            handler.removeCallbacks(hideRunnable)
+            controls.visibility = View.GONE
+        } else {
+            showControls()
+        }
+    }
+
+    private fun showControls() {
+        controls.visibility = View.VISIBLE
+
+        handler.removeCallbacks(hideRunnable)
+
+        if (videoView.isPlaying) {
+            handler.postDelayed(hideRunnable, 3500)
+        }
+    }
+
+    private fun toggleFullscreen() {
+        isFullscreen = !isFullscreen
+
+        if (isFullscreen) {
+            window.decorView.systemUiVisibility = (
+                View.SYSTEM_UI_FLAG_FULLSCREEN or
+                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            )
+
+            fullButton.text = "⛶"
+        } else {
+            window.decorView.systemUiVisibility =
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+
+            fullButton.text = "⛶"
+        }
+
+        showControls()
+    }
+
+    private fun formatTime(ms: Int): String {
+        val seconds = (ms / 1000) % 60
+        val minutes = (ms / 60000) % 60
+        val hours = ms / 3600000
+
+        return if (hours > 0) {
+            String.format(
+                "%d:%02d:%02d",
+                hours, minutes, seconds
+            )
+        } else {
+            String.format(
+                "%02d:%02d",
+                minutes, seconds
+            )
+        }
+    }
+
+    @Deprecated("Deprecated in Android")
+    override fun onBackPressed() {
+        if (isFullscreen) {
+            toggleFullscreen()
+        } else {
+            super.onBackPressed()
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (::videoView.isInitialized && videoView.isPlaying) {
+            videoView.pause()
+            playButton.text = "▶"
+        }
+    }
+
+    override fun onDestroy() {
+        handler.removeCallbacks(updateRunnable)
+        handler.removeCallbacks(hideRunnable)
+
+        if (::videoView.isInitialized) {
+            videoView.stopPlayback()
+        }
+
+        window.clearFlags(
+            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+        )
+
+        super.onDestroy()
+    }
+}
