@@ -3,7 +3,7 @@ package com.haithem44.offlinetube
 import android.Manifest
 import android.app.Activity
 import android.content.ContentUris
-importandroid.content.Context
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -245,4 +245,33 @@ class MainActivity : Activity() {
     }
 
     override fun onRequestPermissionsResult(rc: Int, p: Array<out String>, r: IntArray) {
-        super.onRequestPermissions
+        super.onRequestPermissionsResult(rc, p, r)
+        if (r.isNotEmpty() && r[0] == PackageManager.PERMISSION_GRANTED) loadVideos()
+        else Toast.makeText(this, "الرجاء السماح بالوصول للفيديوهات", Toast.LENGTH_LONG).show()
+    }
+
+    private fun hideKb() {
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+        imm.hideSoftInputFromWindow(input.windowToken, 0)
+    }
+
+    private fun applyFilter(q: String) {
+        val query = q.trim()
+        val list = if (query.isEmpty()) allVideos
+        else allVideos.filter { it.title.contains(query, ignoreCase = true) }
+        rebuildRows(list, query.isNotEmpty())
+        adapter.notifyDataSetChanged()
+        emptyText.visibility =
+            if (rows.isEmpty() && allVideos.isNotEmpty()) View.VISIBLE else View.GONE
+        if (rows.isNotEmpty()) listView.setSelection(0)
+    }
+
+    private fun rebuildRows(list: List<Vid>, searching: Boolean) {
+        rows.clear()
+        if (searching) {
+            for (v in list) rows.add(Row(2, listOf(v)))
+            return
+        }
+        val pattern = intArrayOf(0, 1, 3, 4, 2, 2)
+        val sizes = intArrayOf(1, 2, 3, 4, 1, 1)
+        var i
