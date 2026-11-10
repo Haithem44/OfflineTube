@@ -1,4 +1,4 @@
-Package com.haithem44.offlinetube
+package com.haithem44.offlinetube
 
 import android.Manifest
 import android.app.Activity
@@ -66,7 +66,7 @@ class MainActivity : Activity() {
     private var tab = 0
     private var query = ""
 
-    // تمت إضافة "Shorts" هنا
+    // الفهرس 4 = Shorts (فيديوهات مدتها دقيقة أو أقل)
     private val tabNames = arrayOf("الصفحة الرئيسية", "تابع المشاهدة", "الأطول", "الأقصر", "Shorts")
     private val tabTexts = ArrayList<TextView>()
     private val tabLines = ArrayList<View>()
@@ -80,12 +80,15 @@ class MainActivity : Activity() {
     private val pool = Executors.newFixedThreadPool(3)
     private val ui = Handler(Looper.getMainLooper())
 
+    // ذاكرة مؤقتة تُحسب بحجم الصور الفعلي (بالكيلوبايت)
     private val cache = object : LruCache<Long, Bitmap>(
         (Runtime.getRuntime().maxMemory() / 1024 / 6).toInt()
     ) {
         override fun sizeOf(key: Long, value: Bitmap): Int = value.byteCount / 1024
     }
 
+    // دقة الصور: بعرض الشاشة الفعلي (حد أدنى 1080 وأقصى 2160 بكسل)
+    // لو أردت أعلى جودة غيّر 2160 إلى 3840 (يستهلك ذاكرة أكبر)
     private val thumbW: Int by lazy {
         maxOf(resources.displayMetrics.widthPixels, 1080).coerceAtMost(2160)
     }
@@ -187,6 +190,8 @@ class MainActivity : Activity() {
         checkPermissionAndLoad()
     }
 
+    // ---------------- Top block (logo / banner / search) ----------------
+
     private fun findImageRes(name: String): Int {
         var id = resources.getIdentifier(name, "drawable", packageName)
         if (id == 0) id = resources.getIdentifier(name, "mipmap", packageName)
@@ -220,6 +225,7 @@ class MainActivity : Activity() {
         row.gravity = Gravity.CENTER_VERTICAL
         row.setPadding(dp(12), 0, dp(8), 0)
 
+        // شعار على طريقة يوتيوب
         logo = LinearLayout(this)
         logo.orientation = LinearLayout.HORIZONTAL
         logo.gravity = Gravity.CENTER_VERTICAL
@@ -261,6 +267,7 @@ class MainActivity : Activity() {
                 query = s?.toString() ?: ""
                 refresh()
             }
+
             override fun beforeTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}
             override fun onTextChanged(s: CharSequence?, st: Int, b: Int, c: Int) {}
         })
@@ -301,6 +308,8 @@ class MainActivity : Activity() {
         searchBox.requestFocus()
         imm.showSoftInput(searchBox, InputMethodManager.SHOW_IMPLICIT)
     }
+
+    // ---------------- Tabs ----------------
 
     private fun buildTabs(): View {
         val scroll = HorizontalScrollView(this)
@@ -346,6 +355,8 @@ class MainActivity : Activity() {
         listView.setSelection(0)
     }
 
+    // ---------------- Bottom nav ----------------
+
     private fun buildBottomNav(): View {
         val bar = LinearLayout(this)
         bar.orientation = LinearLayout.VERTICAL
@@ -357,9 +368,15 @@ class MainActivity : Activity() {
 
         val row = LinearLayout(this)
         row.orientation = LinearLayout.HORIZONTAL
-        row.addView(navItem("🏠", "الرئيسية") { selectTab(0) }, LinearLayout.LayoutParams(0, -1, 1f))
-        row.addView(navItem("🔍", "بحث") { openSearch() }, LinearLayout.LayoutParams(0, -1, 1f))
-        row.addView(navItem("▶", "تابع") { selectTab(1) }, LinearLayout.LayoutParams(0, -1, 1f))
+        row.addView(navItem("🏠", "الرئيسية") {
+            selectTab(0)
+        }, LinearLayout.LayoutParams(0, -1, 1f))
+        row.addView(navItem("🔍", "بحث") {
+            openSearch()
+        }, LinearLayout.LayoutParams(0, -1, 1f))
+        row.addView(navItem("▶", "تابع") {
+            selectTab(1)
+        }, LinearLayout.LayoutParams(0, -1, 1f))
         bar.addView(row, LinearLayout.LayoutParams(-1, -1))
         return bar
     }
@@ -384,6 +401,8 @@ class MainActivity : Activity() {
         return col
     }
 
+    // ---------------- Filtering ----------------
+
     private fun refresh() {
         val s = query.trim().lowercase()
         var list: List<VideoItem> = all.filter { s.isEmpty() || it.title.lowercase().contains(s) }
@@ -391,13 +410,15 @@ class MainActivity : Activity() {
             1 -> list.filter { prefs.getLong("p_" + it.id, 0L) > 0L }
             2 -> list.sortedByDescending { it.duration }
             3 -> list.sortedBy { it.duration }
-            4 -> list.filter { it.duration in 1..60000 } // فلترة الفيديوهات القصيرة (أقل من دقيقة)
+            4 -> list.filter { it.duration in 1L..60000L }
             else -> list
         }
         shown.clear()
         shown.addAll(list)
         adapter.notifyDataSetChanged()
     }
+
+    // ---------------- Permission + loading ----------------
 
     private fun checkPermissionAndLoad() {
         val perm = if (Build.VERSION.SDK_INT >= 33)
@@ -451,6 +472,8 @@ class MainActivity : Activity() {
         }
     }
 
+    // ---------------- List adapter (YouTube-style items) ----------------
+
     inner class VideoAdapter : BaseAdapter() {
         override fun getCount() = shown.size
         override fun getItem(p: Int) = shown[p]
@@ -472,6 +495,7 @@ class MainActivity : Activity() {
         box.orientation = LinearLayout.VERTICAL
         box.setPadding(0, 0, 0, dp(22))
 
+        // صورة بعرض الشاشة كاملاً
         box.addView(thumbFrame(v, w, th), LinearLayout.LayoutParams(w, th))
 
         val row = LinearLayout(this)
@@ -479,6 +503,7 @@ class MainActivity : Activity() {
         row.gravity = Gravity.TOP
         row.setPadding(dp(12), dp(12), dp(6), 0)
 
+        // دائرة ملوّنة بأول حرف من العنوان
         val avatar = TextView(this)
         val letter = v.title.trim().firstOrNull()?.toString()?.uppercase() ?: "V"
         avatar.text = letter
@@ -516,6 +541,7 @@ class MainActivity : Activity() {
         col.addView(sub)
         row.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
 
+        // زر القائمة
         val dots = TextView(this)
         dots.text = "•••"
         dots.setTextColor(Color.WHITE)
@@ -538,6 +564,7 @@ class MainActivity : Activity() {
         return box
     }
 
+    // Thumbnail + duration badge (bottom-left) + red progress line
     private fun thumbFrame(v: VideoItem, w: Int, h: Int): FrameLayout {
         val f = FrameLayout(this)
         f.setBackgroundColor(Color.parseColor("#222222"))
@@ -580,6 +607,8 @@ class MainActivity : Activity() {
         }
         return f
     }
+
+    // ---------------- High-quality thumbnails ----------------
 
     private fun loadThumb(v: VideoItem, iv: ImageView) {
         iv.tag = v.id
@@ -630,10 +659,13 @@ class MainActivity : Activity() {
         }
     }
 
+    // يستخرج إطاراً من الفيديو الأصلي بأعلى دقة ثم يصغّره بجودة عالية
     private fun extractFrame(v: VideoItem): Bitmap? {
         val r = MediaMetadataRetriever()
         try {
             r.setDataSource(this, v.uri)
+
+            // إطار عند 10% من الفيديو لتجنّب الشاشة السوداء
             val durUs = v.duration * 1000L
             val t = if (durUs > 0) (durUs * 0.10).toLong() else 0L
 
@@ -646,6 +678,7 @@ class MainActivity : Activity() {
 
             var frame: Bitmap? = null
             if (Build.VERSION.SDK_INT >= 27 && vw > 0 && vh > 0) {
+                // نحافظ على نسبة الأبعاد: العرض = thumbW، ولا نكبّر أبداً
                 val targetW = minOf(thumbW, vw)
                 val targetH = maxOf(1, (targetW.toLong() * vh / vw).toInt())
                 frame = r.getScaledFrameAtTime(
@@ -665,9 +698,13 @@ class MainActivity : Activity() {
             if (frame != null) return frame
         } catch (e: Throwable) {
         } finally {
-            try { r.release() } catch (e: Exception) {}
+            try {
+                r.release()
+            } catch (e: Exception) {
+            }
         }
 
+        // خطة بديلة: صورة النظام
         return try {
             if (Build.VERSION.SDK_INT >= 29) {
                 contentResolver.loadThumbnail(v.uri, Size(thumbW, thumbH), null)
@@ -681,6 +718,8 @@ class MainActivity : Activity() {
             null
         }
     }
+
+    // ---------------- Player ----------------
 
     private fun buildPlayer() {
         playerRoot = FrameLayout(this)
@@ -696,8 +735,10 @@ class MainActivity : Activity() {
                     startPlayback(it)
                 }
             }
+
             override fun surfaceChanged(h: SurfaceHolder, f: Int, w: Int, hh: Int) {}
             override fun surfaceDestroyed(h: SurfaceHolder) {
+                // keep audio playing when the screen locks
                 mp?.let { try { it.setDisplay(null) } catch (e: Exception) { } }
             }
         })
@@ -710,6 +751,7 @@ class MainActivity : Activity() {
         }
         playerRoot.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> fitVideo() }
 
+        // top bar
         topBar = LinearLayout(this)
         topBar.orientation = LinearLayout.HORIZONTAL
         topBar.gravity = Gravity.CENTER_VERTICAL
@@ -729,6 +771,7 @@ class MainActivity : Activity() {
         topBar.addView(playerTitle, LinearLayout.LayoutParams(0, -2, 1f))
         playerRoot.addView(topBar, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
 
+        // bottom controls
         controls = LinearLayout(this)
         controls.orientation = LinearLayout.HORIZONTAL
         controls.gravity = Gravity.CENTER_VERTICAL
@@ -754,7 +797,10 @@ class MainActivity : Activity() {
         seekBar = SeekBar(this)
         seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {}
-            override fun onStartTrackingTouch(s: SeekBar?) { userSeeking = true }
+            override fun onStartTrackingTouch(s: SeekBar?) {
+                userSeeking = true
+            }
+
             override fun onStopTrackingTouch(s: SeekBar?) {
                 userSeeking = false
                 if (prepared) mp?.seekTo(seekBar.progress)
@@ -769,6 +815,7 @@ class MainActivity : Activity() {
         timeText.setPadding(dp(6), 0, dp(6), 0)
         controls.addView(timeText)
 
+        // زر ملء الشاشة بالكامل (قص الأطراف) / احتواء
         val fill = TextView(this)
         fill.text = "⤢"
         fill.setTextColor(Color.WHITE)
@@ -780,6 +827,7 @@ class MainActivity : Activity() {
         }
         controls.addView(fill)
 
+        // زر تدوير الشاشة
         val fs = TextView(this)
         fs.text = "⛶"
         fs.setTextColor(Color.WHITE)
@@ -822,12 +870,16 @@ class MainActivity : Activity() {
                     .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
                     .setUsage(AudioAttributes.USAGE_MEDIA).build()
             )
-            try { p.setWakeMode(applicationContext, PowerManager.PARTIAL_WAKE_LOCK) } catch (e: Exception) {}
+            try {
+                p.setWakeMode(applicationContext, PowerManager.PARTIAL_WAKE_LOCK)
+            } catch (e: Exception) {
+            }
             p.setDataSource(this, v.uri)
             p.setDisplay(surfaceView.holder)
             p.setOnVideoSizeChangedListener { _, w, h ->
                 videoW = w
                 videoH = h
+                // الفيديو العرضي يفتح تلقائياً بشاشة أفقية ممتلئة
                 if (w > h && !isLandscape) {
                     isLandscape = true
                     requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
@@ -897,7 +949,10 @@ class MainActivity : Activity() {
         val p = mp
         val c = current
         if (p != null && c != null && prepared) {
-            try { savePos(c, p.currentPosition.toLong(), p.duration.toLong()) } catch (e: Exception) {}
+            try {
+                savePos(c, p.currentPosition.toLong(), p.duration.toLong())
+            } catch (e: Exception) {
+            }
         }
         releasePlayer()
         current = null
@@ -920,7 +975,8 @@ class MainActivity : Activity() {
             p.setOnPreparedListener(null)
             p.setOnCompletionListener(null)
             p.release()
-        } catch (e: Exception) {}
+        } catch (e: Exception) {
+        }
     }
 
     private fun savePos(v: VideoItem, pos: Long, dur: Long) {
@@ -937,6 +993,8 @@ class MainActivity : Activity() {
         pool.shutdown()
         super.onDestroy()
     }
+
+    // ---------------- helpers ----------------
 
     private fun dp(x: Int) = (x * resources.displayMetrics.density).toInt()
 
