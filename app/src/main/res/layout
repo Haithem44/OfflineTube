@@ -2,36 +2,26 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#121212"
     android:orientation="vertical"
-    android:padding="16dp">
+    android:background="#121212"> <!-- لون خلفية التطبيق (اختياري) -->
 
-    <!-- البانر العلوي للتطبيق -->
+    <!-- كود عرض الصورة (البانر) -->
     <ImageView
-        android:id="@+id/imgAppBanner"
+        android:id="@+id/bannerImage"
         android:layout_width="match_parent"
-        android:layout_height="180dp"
-        android:layout_marginBottom="16dp"
-        android:scaleType="fitCenter"
+        android:layout_height="wrap_content"
         android:src="@drawable/app_banner"
-        android:contentDescription="App Banner" />
+        android:scaleType="centerCrop"
+        android:adjustViewBounds="true" />
 
-    <!-- عنوان أو ترحيب -->
+    <!-- هنا تضع باقي عناصر التطبيق (أزرار، نصوص، فيديوهات، إلخ) -->
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="8dp"
-        android:text="الفيديوهات المتاحة"
+        android:text="مرحباً بك في OfflineTube"
         android:textColor="#FFFFFF"
         android:textSize="20sp"
-        android:textStyle="bold" />
-
-    <!-- مكان عرض قائمة أو شبكة الفيديوهات -->
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/recyclerViewVideos"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:scrollbars="vertical" />
+        android:gravity="center"
+        android:padding="20dp" />
 
 </LinearLayout>
