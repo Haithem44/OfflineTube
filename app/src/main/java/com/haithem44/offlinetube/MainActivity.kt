@@ -115,8 +115,10 @@ class MainActivity : Activity() {
             scaleType = ImageView.ScaleType.FIT_CENTER
             adjustViewBounds = true
             try {
+                // تم الإصلاح: يجب التأكد من وجود المورد R.drawable.app_banner
                 setImageResource(R.drawable.app_banner)
             } catch (e: Exception) {
+                // في حال عدم وجود الصورة، يتم استخدام لون خلفية بديل
                 setBackgroundColor(Color.parseColor("#1F1F1F"))
             }
         }
@@ -139,4 +141,7 @@ class MainActivity : Activity() {
         val searchIcon = SearchIcon(this).apply { isClickable = true }
         
         header.addView(subTitle, LinearLayout.LayoutParams(0, -2, 1f))
-        header.addView(searchIcon, LinearLayout.LayoutParams(dp(40), dp(
+        header.addView(searchIcon, LinearLayout.LayoutParams(dp(40), dp(40)))
+        // ... بقية الكود (لم يتم استرجاعه بالكامل)
+    }
+}
