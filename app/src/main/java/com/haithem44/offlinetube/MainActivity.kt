@@ -110,16 +110,16 @@ class MainActivity : Activity() {
             fitsSystemWindows = true
         }
 
-        // --- وضع الصورة المرفقة في الأعلى كبانر احترافي بدون أي نصوص مجاورة ---
+        // --- بانر الصورة العلوية المرفقة (يتم وضعه عبر استدعاء المورد drawable) ---
         val bannerImageView = ImageView(this).apply {
             scaleType = ImageView.ScaleType.FIT_CENTER
             adjustViewBounds = true
-            // ملاحظة: يُفضل وضع الصورة داخل پوشدر drawable باسم "app_banner" واستدعاؤها هنا عبر setImageResource(R.drawable.app_banner)
-            // وللعمل المباشر عبر الكود المؤقت، يرجى ربطها بمورد الصورة لديك.
+            // استبدل app_banner باسم ملف الصورة بعد وضعها في مجلد drawable
+            setImageResource(R.drawable.app_banner)
             setBackgroundColor(Color.parseColor("#0F0F0F"))
         }
 
-        // --- هيدر يوتيوب للبحث والإعدادات ---
+        // --- هيدر التطبيق للبحث والعنوان ---
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -160,7 +160,7 @@ class MainActivity : Activity() {
         }
         searchBar.addView(input, LinearLayout.LayoutParams(-1, -2))
 
-        // القائمة الرئيسية مع دعم النزول لأسفل والتمرير السلس
+        // القائمة الرئيسية مع دعم التمرير والنزول لأسفل
         listView = ListView(this).apply {
             divider = null
             dividerHeight = 0
@@ -196,7 +196,6 @@ class MainActivity : Activity() {
                 val row = rows[p]
                 val view = cv ?: buildRow(row.type)
                 if (row.type == 4) {
-                    // تخصيص قسم الـ Shorts الأفقي
                     setupShortsRow(view, row.items)
                 } else {
                     val h = view.tag as RowHolder
@@ -239,4 +238,41 @@ class MainActivity : Activity() {
                 input.requestFocus()
                 input.post {
                     val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-                    imm.showSoftInput(input,
+                    imm.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
+                }
+            }
+        }
+
+        val perm = if (Build.VERSION.SDK_INT >= 33)
+            Manifest.permission.READ_MEDIA_VIDEO
+        else Manifest.permission.READ_EXTERNAL_STORAGE
+        if (checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED) loadVideos()
+        else requestPermissions(arrayOf(perm), 1)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::adapter.isInitialized) adapter.notifyDataSetChanged()
+    }
+
+    override fun onRequestPermissionsResult(rc: Int, p: Array<out String>, r: IntArray) {
+        super.onRequestPermissionsResult(rc, p, r)
+        if (r.isNotEmpty() && r[0] == PackageManager.PERMISSION_GRANTED) loadVideos()
+        else Toast.makeText(this, "الرجاء السماح بالوصول للفيديوهات", Toast.LENGTH_LONG).show()
+    }
+
+    private fun hideKb() {
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+        imm.hideSoftInputFromWindow(input.windowToken, 0)
+    }
+
+    private fun applyFilter(q: String) {
+        val query = q.trim()
+        val list = if (query.isEmpty()) allVideos
+        else allVideos.filter { it.title.contains(query, ignoreCase = true) }
+        rebuildRows(list, query.isNotEmpty())
+        adapter.notifyDataSetChanged()
+        emptyText.visibility =
+            if (rows.isEmpty() && allVideos.isNotEmpty()) View.VISIBLE else View.GONE
+        if (rows.isNotEmpty()) listView.setSelection(0)
+    
