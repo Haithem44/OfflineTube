@@ -27,6 +27,7 @@ import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
 import android.view.inputmethod.InputMethodManager
 import android.widget.BaseAdapter
 import android.widget.EditText
@@ -44,6 +45,7 @@ data class VideoItem(val id: Long, val title: String, val duration: Long, val ur
 class MainActivity : Activity() {
 
     private val bg = Color.parseColor("#0F0F0F")
+    private val cardBg = Color.parseColor("#1C1C1E")
     private val red = Color.parseColor("#FF0000")
 
     private val all = ArrayList<VideoItem>()
@@ -113,6 +115,8 @@ class MainActivity : Activity() {
         listView = ListView(this)
         listView.divider = null
         listView.setBackgroundColor(bg)
+        listView.setPadding(0, dp(4), 0, dp(16))
+        listView.clipToPadding = false
         adapter = VideoAdapter()
         listView.adapter = adapter
         listView.setOnItemClickListener { _, _, pos, _ ->
@@ -142,7 +146,7 @@ class MainActivity : Activity() {
         titleView = TextView(this)
         titleView.text = "OfflineTube"
         titleView.setTextColor(Color.WHITE)
-        titleView.textSize = 20f
+        titleView.textSize = 22f
         titleView.typeface = Typeface.DEFAULT_BOLD
         bar.addView(titleView, LinearLayout.LayoutParams(0, -2, 1f))
 
@@ -247,85 +251,63 @@ class MainActivity : Activity() {
         }
     }
 
-    // ---------------- List adapter (varied cards) ----------------
+    // ---------------- List adapter (large cards) ----------------
 
     inner class VideoAdapter : BaseAdapter() {
         override fun getCount() = shown.size
         override fun getItem(p: Int) = shown[p]
         override fun getItemId(p: Int) = shown[p].id
-        override fun getViewTypeCount() = 3
-        override fun getItemViewType(p: Int) = when (p % 4) {
-            0 -> 0
-            3 -> 2
-            else -> 1
-        }
-
+        override fun getViewTypeCount() = 1
+        override fun getItemViewType(p: Int) = 0
         override fun getView(p: Int, convertView: View?, parent: ViewGroup?): View {
-            val v = shown[p]
-            return when (getItemViewType(p)) {
-                0 -> featuredCard(v)
-                2 -> overlayCard(v)
-                else -> compactRow(v)
-            }
+            return bigCard(shown[p])
         }
     }
 
     private fun screenW() = resources.displayMetrics.widthPixels
 
-    // Big card: large thumbnail, title below
-    private fun featuredCard(v: VideoItem): View {
-        val box = LinearLayout(this)
-        box.orientation = LinearLayout.VERTICAL
-        box.setPadding(0, 0, 0, dp(16))
-        box.addView(thumbFrame(v, screenW(), screenW() * 9 / 16))
-        val t = titleText(v.title, 16f, 2)
-        t.setPadding(dp(12), dp(8), dp(12), 0)
-        box.addView(t)
-        return box
-    }
+    // Large rounded card: wide thumbnail on top, title + info below
+    private fun bigCard(v: VideoItem): View {
+        val cardW = screenW() - dp(24)
+        val thumbH = cardW * 9 / 16
 
-    // Compact row: small thumbnail on the left, title on the right
-    private fun compactRow(v: VideoItem): View {
-        val row = LinearLayout(this)
-        row.orientation = LinearLayout.HORIZONTAL
-        row.setPadding(dp(12), dp(6), dp(12), dp(6))
-        row.addView(thumbFrame(v, dp(160), dp(90)), LinearLayout.LayoutParams(dp(160), dp(90)))
-        val t = titleText(v.title, 14f, 3)
-        t.setPadding(dp(12), 0, 0, 0)
-        row.addView(t, LinearLayout.LayoutParams(0, -2, 1f))
-        return row
-    }
+        val card = LinearLayout(this)
+        card.orientation = LinearLayout.VERTICAL
+        val shape = GradientDrawable()
+        shape.setColor(cardBg)
+        shape.cornerRadius = dp(18).toFloat()
+        card.background = shape
+        card.outlineProvider = ViewOutlineProvider.BACKGROUND
+        card.clipToOutline = true
+        card.elevation = dp(4).toFloat()
 
-    // Wide short card with the title over the image
-    private fun overlayCard(v: VideoItem): View {
-        val w = screenW() - dp(24)
-        val h = dp(130)
-        val frame = FrameLayout(this)
-        val inner = thumbFrame(v, w, h)
-        frame.addView(inner, FrameLayout.LayoutParams(w, h))
-        val t = titleText(v.title, 15f, 2)
-        t.setPadding(dp(10), dp(24), dp(10), dp(10))
-        val g = GradientDrawable(
-            GradientDrawable.Orientation.TOP_BOTTOM,
-            intArrayOf(Color.TRANSPARENT, Color.parseColor("#CC000000"))
-        )
-        t.background = g
-        frame.addView(t, FrameLayout.LayoutParams(w, -2, Gravity.BOTTOM).apply { bottomMargin = dp(4) })
+        card.addView(thumbFrame(v, cardW, thumbH), LinearLayout.LayoutParams(cardW, thumbH))
+
+        val title = TextView(this)
+        title.text = v.title
+        title.setTextColor(Color.WHITE)
+        title.textSize = 17f
+        title.typeface = Typeface.DEFAULT_BOLD
+        title.maxLines = 2
+        title.ellipsize = android.text.TextUtils.TruncateAt.END
+        title.setPadding(dp(14), dp(12), dp(14), 0)
+        card.addView(title)
+
+        val info = TextView(this)
+        val pos = prefs.getLong("p_" + v.id, 0L)
+        val dur = if (v.duration > 0) v.duration else prefs.getLong("d_" + v.id, 0L)
+        val pct = if (pos > 0 && dur > 0) ((pos * 100) / dur).toInt().coerceIn(0, 100) else 0
+        info.text = if (pct > 0) "المدة " + fmt(v.duration) + "  •  شوهد " + pct + "%"
+        else "المدة " + fmt(v.duration)
+        info.setTextColor(Color.parseColor("#AAAAAA"))
+        info.textSize = 13f
+        info.setPadding(dp(14), dp(4), dp(14), dp(14))
+        card.addView(info)
 
         val outer = FrameLayout(this)
         outer.setPadding(dp(12), dp(8), dp(12), dp(8))
-        outer.addView(frame, FrameLayout.LayoutParams(w, h))
+        outer.addView(card, FrameLayout.LayoutParams(cardW, -2))
         return outer
-    }
-
-    private fun titleText(s: String, size: Float, lines: Int): TextView {
-        val t = TextView(this)
-        t.text = s
-        t.setTextColor(Color.WHITE)
-        t.textSize = size
-        t.maxLines = lines
-        t.ellipsize = android.text.TextUtils.TruncateAt.END
-        return t
     }
 
     // Thumbnail + duration badge + colored watched-progress line
@@ -342,11 +324,14 @@ class MainActivity : Activity() {
         val badge = TextView(this)
         badge.text = fmt(v.duration)
         badge.setTextColor(Color.WHITE)
-        badge.textSize = 11f
-        badge.setBackgroundColor(Color.parseColor("#CC000000"))
-        badge.setPadding(dp(5), dp(1), dp(5), dp(1))
+        badge.textSize = 12f
+        val bShape = GradientDrawable()
+        bShape.setColor(Color.parseColor("#CC000000"))
+        bShape.cornerRadius = dp(6).toFloat()
+        badge.background = bShape
+        badge.setPadding(dp(7), dp(2), dp(7), dp(2))
         f.addView(badge, FrameLayout.LayoutParams(-2, -2, Gravity.END or Gravity.BOTTOM).apply {
-            rightMargin = dp(6); bottomMargin = dp(8)
+            rightMargin = dp(10); bottomMargin = dp(12)
         })
 
         val pos = prefs.getLong("p_" + v.id, 0L)
@@ -361,7 +346,7 @@ class MainActivity : Activity() {
             rest.setBackgroundColor(Color.parseColor("#55FFFFFF"))
             line.addView(done, LinearLayout.LayoutParams(0, -1, frac))
             line.addView(rest, LinearLayout.LayoutParams(0, -1, 1f - frac))
-            f.addView(line, FrameLayout.LayoutParams(-1, dp(3), Gravity.BOTTOM))
+            f.addView(line, FrameLayout.LayoutParams(-1, dp(4), Gravity.BOTTOM))
         }
         return f
     }
@@ -376,7 +361,7 @@ class MainActivity : Activity() {
         pool.execute {
             val bmp: Bitmap? = try {
                 if (Build.VERSION.SDK_INT >= 29) {
-                    contentResolver.loadThumbnail(v.uri, Size(480, 270), null)
+                    contentResolver.loadThumbnail(v.uri, Size(720, 405), null)
                 } else {
                     @Suppress("DEPRECATION")
                     MediaStore.Video.Thumbnails.getThumbnail(
@@ -437,7 +422,11 @@ class MainActivity : Activity() {
         back.setPadding(dp(16), dp(8), dp(16), dp(8))
         back.setOnClickListener { closePlayer() }
         topBar.addView(back)
-        playerTitle = titleText("", 15f, 1)
+        playerTitle = TextView(this)
+        playerTitle.setTextColor(Color.WHITE)
+        playerTitle.textSize = 15f
+        playerTitle.maxLines = 1
+        playerTitle.ellipsize = android.text.TextUtils.TruncateAt.END
         topBar.addView(playerTitle, LinearLayout.LayoutParams(0, -2, 1f))
         playerRoot.addView(topBar, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
 
