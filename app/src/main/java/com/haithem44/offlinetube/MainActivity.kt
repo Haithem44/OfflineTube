@@ -124,7 +124,7 @@ class MainActivity : Activity() {
         listView.setPadding(0, dp(4), 0, dp(16))
         listView.clipToPadding = false
 
-        // صورة الغلاف فوق الفيديوهات (res/drawable/header.jpg أو header.png)
+        // صورة الغلاف فوق الفيديوهات (res/drawable/appbanner.jpg أو appbanner.png)
         val header = buildHeader()
         if (header != null) listView.addHeaderView(header, null, false)
 
@@ -149,7 +149,7 @@ class MainActivity : Activity() {
     // ---------------- Header image ----------------
 
     private fun buildHeader(): View? {
-        val resId = resources.getIdentifier("header", "drawable", packageName)
+        val resId = resources.getIdentifier("appbanner", "drawable", packageName)
         if (resId == 0) return null
         val w = screenW() - dp(24)
         val iv = ImageView(this)
