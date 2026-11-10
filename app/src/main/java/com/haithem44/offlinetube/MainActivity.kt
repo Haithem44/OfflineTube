@@ -28,6 +28,7 @@ import android.view.SurfaceView
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
+import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
 import android.widget.BaseAdapter
 import android.widget.EditText
@@ -78,6 +79,7 @@ class MainActivity : Activity() {
     private var videoW = 0
     private var videoH = 0
     private var isLandscape = false
+    private var fillMode = false
     private var userSeeking = false
 
     private val ticker = object : Runnable {
@@ -104,6 +106,10 @@ class MainActivity : Activity() {
         prefs = getSharedPreferences("offlinetube", Context.MODE_PRIVATE)
         window.statusBarColor = bg
         window.navigationBarColor = bg
+        if (Build.VERSION.SDK_INT >= 28) {
+            window.attributes.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
 
         rootFrame = FrameLayout(this)
         rootFrame.setBackgroundColor(bg)
@@ -117,10 +123,16 @@ class MainActivity : Activity() {
         listView.setBackgroundColor(bg)
         listView.setPadding(0, dp(4), 0, dp(16))
         listView.clipToPadding = false
+
+        // صورة الغلاف فوق الفيديوهات (res/drawable/header.jpg أو header.png)
+        val header = buildHeader()
+        if (header != null) listView.addHeaderView(header, null, false)
+
         adapter = VideoAdapter()
         listView.adapter = adapter
-        listView.setOnItemClickListener { _, _, pos, _ ->
-            if (pos in 0 until shown.size) openPlayer(shown[pos])
+        listView.setOnItemClickListener { parent, _, pos, _ ->
+            val item = parent.getItemAtPosition(pos)
+            if (item is VideoItem) openPlayer(item)
         }
         main.addView(listView, LinearLayout.LayoutParams(-1, 0, 1f))
         rootFrame.addView(main, FrameLayout.LayoutParams(-1, -1))
@@ -132,6 +144,28 @@ class MainActivity : Activity() {
         setContentView(rootFrame)
         ui.post(ticker)
         checkPermissionAndLoad()
+    }
+
+    // ---------------- Header image ----------------
+
+    private fun buildHeader(): View? {
+        val resId = resources.getIdentifier("header", "drawable", packageName)
+        if (resId == 0) return null
+        val w = screenW() - dp(24)
+        val iv = ImageView(this)
+        iv.setImageResource(resId)
+        iv.adjustViewBounds = true
+        iv.scaleType = ImageView.ScaleType.CENTER_CROP
+        val shape = GradientDrawable()
+        shape.setColor(cardBg)
+        shape.cornerRadius = dp(18).toFloat()
+        iv.background = shape
+        iv.outlineProvider = ViewOutlineProvider.BACKGROUND
+        iv.clipToOutline = true
+        val outer = FrameLayout(this)
+        outer.setPadding(dp(12), dp(8), dp(12), dp(8))
+        outer.addView(iv, FrameLayout.LayoutParams(w, -2))
+        return outer
     }
 
     // ---------------- UI: top bar ----------------
@@ -474,11 +508,24 @@ class MainActivity : Activity() {
         timeText.setPadding(dp(6), 0, dp(6), 0)
         controls.addView(timeText)
 
+        // زر ملء الشاشة بالكامل (قص الأطراف) / احتواء
+        val fill = TextView(this)
+        fill.text = "⤢"
+        fill.setTextColor(Color.WHITE)
+        fill.textSize = 24f
+        fill.setPadding(dp(10), dp(8), dp(10), dp(8))
+        fill.setOnClickListener {
+            fillMode = !fillMode
+            fitVideo()
+        }
+        controls.addView(fill)
+
+        // زر تدوير الشاشة
         val fs = TextView(this)
         fs.text = "⛶"
         fs.setTextColor(Color.WHITE)
         fs.textSize = 24f
-        fs.setPadding(dp(12), dp(8), dp(12), dp(8))
+        fs.setPadding(dp(10), dp(8), dp(10), dp(8))
         fs.setOnClickListener { toggleFullscreen() }
         controls.addView(fs)
 
@@ -488,6 +535,9 @@ class MainActivity : Activity() {
     private fun openPlayer(v: VideoItem) {
         releasePlayer()
         current = v
+        videoW = 0
+        videoH = 0
+        fillMode = false
         playerTitle.text = v.title
         playPause.text = "⏸"
         seekBar.progress = 0
@@ -520,7 +570,14 @@ class MainActivity : Activity() {
             p.setDataSource(this, v.uri)
             p.setDisplay(surfaceView.holder)
             p.setOnVideoSizeChangedListener { _, w, h ->
-                videoW = w; videoH = h; fitVideo()
+                videoW = w
+                videoH = h
+                // الفيديو العرضي يفتح تلقائياً بشاشة أفقية ممتلئة
+                if (w > h && !isLandscape) {
+                    isLandscape = true
+                    requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                }
+                fitVideo()
             }
             p.setOnPreparedListener { m ->
                 prepared = true
@@ -548,7 +605,9 @@ class MainActivity : Activity() {
         val cw = playerRoot.width
         val ch = playerRoot.height
         if (videoW <= 0 || videoH <= 0 || cw <= 0 || ch <= 0) return
-        val scale = minOf(cw.toFloat() / videoW, ch.toFloat() / videoH)
+        val sx = cw.toFloat() / videoW
+        val sy = ch.toFloat() / videoH
+        val scale = if (fillMode) maxOf(sx, sy) else minOf(sx, sy)
         val nw = (videoW * scale).toInt()
         val nh = (videoH * scale).toInt()
         val lp = surfaceView.layoutParams as FrameLayout.LayoutParams
@@ -565,14 +624,15 @@ class MainActivity : Activity() {
         requestedOrientation = if (isLandscape)
             ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         else
-            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
     }
 
     @Suppress("DEPRECATION")
     private fun hideSystemBars(hide: Boolean) {
         window.decorView.systemUiVisibility = if (hide) {
             View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
-                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
         } else {
             View.SYSTEM_UI_FLAG_VISIBLE
         }
@@ -590,6 +650,9 @@ class MainActivity : Activity() {
         releasePlayer()
         current = null
         pending = null
+        videoW = 0
+        videoH = 0
+        fillMode = false
         playerRoot.visibility = View.GONE
         isLandscape = false
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
