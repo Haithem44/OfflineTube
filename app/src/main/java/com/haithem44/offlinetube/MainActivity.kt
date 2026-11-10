@@ -88,7 +88,7 @@ class MainActivity : Activity() {
             fitsSystemWindows = true
         }
 
-        // 1. صورة البانر (تم حمايتها بـ try-catch في حال عدم وجود الصورة)
+        // 1. صورة البانر
         val bannerImageView = ImageView(this).apply {
             scaleType = ImageView.ScaleType.FIT_CENTER
             adjustViewBounds = true
@@ -109,7 +109,7 @@ class MainActivity : Activity() {
         }
 
         val subTitle = TextView(this).apply {
-            text = "TUBE TV PRO"
+            setText("TUBE TV PRO")
             setTextColor(Color.WHITE)
             textSize = 15f
             setTypeface(null, android.graphics.Typeface.BOLD)
@@ -123,7 +123,7 @@ class MainActivity : Activity() {
                     input.requestFocus()
                 } else {
                     input.visibility = View.GONE
-                    input.text.clear()
+                    input.setText("") // تم التعديل هنا لتفادي خطأ text
                 }
             }
         }
@@ -152,7 +152,7 @@ class MainActivity : Activity() {
 
         // 4. نص يظهر عند عدم وجود فيديوهات
         emptyText = TextView(this).apply {
-            text = "لا توجد فيديوهات في جهازك"
+            setText("لا توجد فيديوهات في جهازك")
             setTextColor(Color.GRAY)
             textSize = 16f
             gravity = Gravity.CENTER
@@ -171,14 +171,20 @@ class MainActivity : Activity() {
         // إعداد المحول (Adapter) للقائمة
         adapter = object : ArrayAdapter<Vid>(this, android.R.layout.simple_list_item_1, filteredVideos) {
             override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-                val v = convertView ?: TextView(context).apply {
-                    setPadding(dp(16), dp(24), dp(16), dp(24))
-                    setTextColor(Color.WHITE)
-                    textSize = 16f
-                } as TextView
+                // الحل الجذري لمشكلة text: تحويل صريح وإجبار النوع
+                val v: TextView = if (convertView == null) {
+                    TextView(this@MainActivity).apply {
+                        setPadding(dp(16), dp(24), dp(16), dp(24))
+                        setTextColor(Color.WHITE)
+                        textSize = 16f
+                    }
+                } else {
+                    convertView as TextView
+                }
                 
                 val vid = getItem(position)
-                v.text = vid?.title
+                // استخدام setText بدلاً من .text لتجنب أي مشاكل في المترجم
+                v.setText(vid?.title ?: "بدون عنوان")
                 
                 // الانتقال إلى مشغل الفيديو عند الضغط
                 v.setOnClickListener {
@@ -196,10 +202,16 @@ class MainActivity : Activity() {
         setContentView(root)
 
         // طلب الصلاحيات
-        if (checkSelfPermission(if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) Manifest.permission.READ_MEDIA_VIDEO else Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED) {
+        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.READ_MEDIA_VIDEO
+        } else {
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+
+        if (checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED) {
             loadVideos()
         } else {
-            requestPermissions(arrayOf(if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) Manifest.permission.READ_MEDIA_VIDEO else Manifest.permission.READ_EXTERNAL_STORAGE), 1)
+            requestPermissions(arrayOf(permission), 1)
         }
     }
 
@@ -209,7 +221,7 @@ class MainActivity : Activity() {
         if (requestCode == 1 && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
             loadVideos()
         } else {
-            emptyText.text = "تم رفض الصلاحية. لا يمكن تحميل الفيديوهات."
+            emptyText.setText("تم رفض الصلاحية. لا يمكن تحميل الفيديوهات.")
             emptyText.visibility = View.VISIBLE
         }
     }
