@@ -6,10 +6,12 @@ import android.content.Context
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.media.AudioAttributes
+import android.media.MediaMetadataRetriever
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
@@ -40,6 +42,8 @@ import android.widget.ListView
 import android.widget.PopupMenu
 import android.widget.SeekBar
 import android.widget.TextView
+import java.io.File
+import java.io.FileOutputStream
 import java.util.concurrent.Executors
 
 data class VideoItem(val id: Long, val title: String, val duration: Long, val uri: Uri)
@@ -74,10 +78,22 @@ class MainActivity : Activity() {
 
     private val pool = Executors.newFixedThreadPool(3)
     private val ui = Handler(Looper.getMainLooper())
+
+    // ذاكرة مؤقتة تُحسب بحجم الصور الفعلي (بالكيلوبايت)
     private val cache = object : LruCache<Long, Bitmap>(
-        (Runtime.getRuntime().maxMemory() / 1024 / 8).toInt()
+        (Runtime.getRuntime().maxMemory() / 1024 / 6).toInt()
     ) {
         override fun sizeOf(key: Long, value: Bitmap): Int = value.byteCount / 1024
+    }
+
+    // دقة الصور: بعرض الشاشة الفعلي (حد أدنى 1080 وأقصى 2160 بكسل)
+    // لو أردت أعلى جودة غيّر 2160 إلى 3840 (يستهلك ذاكرة أكبر)
+    private val thumbW: Int by lazy {
+        maxOf(resources.displayMetrics.widthPixels, 1080).coerceAtMost(2160)
+    }
+    private val thumbH: Int by lazy { thumbW * 9 / 16 }
+    private val thumbDir: File by lazy {
+        File(cacheDir, "thumbs_hq").apply { mkdirs() }
     }
 
     // Player
@@ -590,30 +606,114 @@ class MainActivity : Activity() {
         return f
     }
 
+    // ---------------- High-quality thumbnails ----------------
+
     private fun loadThumb(v: VideoItem, iv: ImageView) {
         iv.tag = v.id
         val cached = cache.get(v.id)
         if (cached != null) {
+            iv.alpha = 1f
             iv.setImageBitmap(cached)
             return
         }
+        iv.setImageDrawable(null)
+        iv.alpha = 0f
         pool.execute {
-            val bmp: Bitmap? = try {
-                if (Build.VERSION.SDK_INT >= 29) {
-                    contentResolver.loadThumbnail(v.uri, Size(720, 405), null)
-                } else {
-                    @Suppress("DEPRECATION")
-                    MediaStore.Video.Thumbnails.getThumbnail(
-                        contentResolver, v.id, MediaStore.Video.Thumbnails.MINI_KIND, null
-                    )
+            var bmp: Bitmap? = readDisk(v)
+            if (bmp == null) {
+                bmp = extractFrame(v)
+                if (bmp != null) writeDisk(v, bmp)
+            }
+            val result = bmp
+            if (result != null) {
+                cache.put(v.id, result)
+                ui.post {
+                    if (iv.tag == v.id) {
+                        iv.setImageBitmap(result)
+                        iv.animate().alpha(1f).setDuration(220).start()
+                    }
                 }
+            }
+        }
+    }
+
+    private fun thumbFile(v: VideoItem) = File(thumbDir, v.id.toString() + "_" + thumbW + ".jpg")
+
+    private fun readDisk(v: VideoItem): Bitmap? {
+        return try {
+            val f = thumbFile(v)
+            if (f.exists() && f.length() > 0) BitmapFactory.decodeFile(f.absolutePath) else null
+        } catch (e: Throwable) {
+            null
+        }
+    }
+
+    private fun writeDisk(v: VideoItem, bmp: Bitmap) {
+        try {
+            FileOutputStream(thumbFile(v)).use { out ->
+                bmp.compress(Bitmap.CompressFormat.JPEG, 95, out)
+            }
+        } catch (e: Exception) {
+        }
+    }
+
+    // يستخرج إطاراً من الفيديو الأصلي بأعلى دقة ثم يصغّره بجودة عالية
+    private fun extractFrame(v: VideoItem): Bitmap? {
+        val r = MediaMetadataRetriever()
+        try {
+            r.setDataSource(this, v.uri)
+
+            // إطار عند 10% من الفيديو لتجنّب الشاشة السوداء
+            val durUs = v.duration * 1000L
+            val t = if (durUs > 0) (durUs * 0.10).toLong() else 0L
+
+            var vw = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
+            var vh = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+            val rot = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+            if (rot == 90 || rot == 270) {
+                val tmp = vw; vw = vh; vh = tmp
+            }
+
+            var frame: Bitmap? = null
+            if (Build.VERSION.SDK_INT >= 27 && vw > 0 && vh > 0) {
+                // نحافظ على نسبة الأبعاد: العرض = thumbW، ولا نكبّر أبداً
+                val targetW = minOf(thumbW, vw)
+                val targetH = maxOf(1, (targetW.toLong() * vh / vw).toInt())
+                frame = r.getScaledFrameAtTime(
+                    t, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, targetW, targetH
+                )
+            }
+            if (frame == null) {
+                val raw = r.getFrameAtTime(t, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                    ?: r.getFrameAtTime(-1)
+                if (raw != null) {
+                    frame = if (raw.width > thumbW) {
+                        val nh = (raw.height.toLong() * thumbW / raw.width).toInt()
+                        Bitmap.createScaledBitmap(raw, thumbW, nh, true)
+                    } else raw
+                }
+            }
+            if (frame != null) return frame
+        } catch (e: Throwable) {
+        } finally {
+            try {
+                r.release()
             } catch (e: Exception) {
-                null
             }
-            if (bmp != null) {
-                cache.put(v.id, bmp)
-                ui.post { if (iv.tag == v.id) iv.setImageBitmap(bmp) }
+        }
+
+        // خطة بديلة: صورة النظام
+        return try {
+            if (Build.VERSION.SDK_INT >= 29) {
+                contentResolver.loadThumbnail(v.uri, Size(thumbW, thumbH), null)
+            } else {
+                @Suppress("DEPRECATION")
+                MediaStore.Video.Thumbnails.getThumbnail(
+                    contentResolver, v.id, MediaStore.Video.Thumbnails.MINI_KIND, null
+                )
             }
+        } catch (e: Throwable) {
+            null
         }
     }
 
