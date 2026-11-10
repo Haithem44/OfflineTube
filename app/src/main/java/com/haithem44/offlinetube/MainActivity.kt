@@ -20,23 +20,24 @@ import android.os.PowerManager
 import android.provider.MediaStore
 import android.text.Editable
 import android.text.TextWatcher
-import android.util.Size
 import android.util.LruCache
+import android.util.Size
 import android.view.Gravity
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
 import android.view.ViewGroup
-import android.view.ViewOutlineProvider
 import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
 import android.widget.BaseAdapter
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ListView
+import android.widget.PopupMenu
 import android.widget.SeekBar
 import android.widget.TextView
 import java.util.concurrent.Executors
@@ -46,8 +47,8 @@ data class VideoItem(val id: Long, val title: String, val duration: Long, val ur
 class MainActivity : Activity() {
 
     private val bg = Color.parseColor("#0F0F0F")
-    private val cardBg = Color.parseColor("#1C1C1E")
     private val red = Color.parseColor("#FF0000")
+    private val gray = Color.parseColor("#AAAAAA")
 
     private val all = ArrayList<VideoItem>()
     private val shown = ArrayList<VideoItem>()
@@ -55,12 +56,29 @@ class MainActivity : Activity() {
     private lateinit var prefs: android.content.SharedPreferences
     private lateinit var listView: ListView
     private lateinit var adapter: VideoAdapter
-    private lateinit var titleView: TextView
+    private lateinit var logo: LinearLayout
     private lateinit var searchBox: EditText
+    private var hasBanner = false
+    private var tab = 0
+    private var query = ""
+
+    private val tabNames = arrayOf("الصفحة الرئيسية", "تابع المشاهدة", "الأطول", "الأقصر")
+    private val tabTexts = ArrayList<TextView>()
+    private val tabLines = ArrayList<View>()
+
+    private val avatarColors = intArrayOf(
+        Color.parseColor("#E53935"), Color.parseColor("#8E24AA"),
+        Color.parseColor("#3949AB"), Color.parseColor("#00897B"),
+        Color.parseColor("#F4511E"), Color.parseColor("#6D4C41")
+    )
 
     private val pool = Executors.newFixedThreadPool(3)
     private val ui = Handler(Looper.getMainLooper())
-    private val cache = object : LruCache<Long, Bitmap>(60) {}
+    private val cache = object : LruCache<Long, Bitmap>(
+        (Runtime.getRuntime().maxMemory() / 1024 / 8).toInt()
+    ) {
+        override fun sizeOf(key: Long, value: Bitmap): Int = value.byteCount / 1024
+    }
 
     // Player
     private lateinit var rootFrame: FrameLayout
@@ -116,28 +134,37 @@ class MainActivity : Activity() {
 
         val main = LinearLayout(this)
         main.orientation = LinearLayout.VERTICAL
-        main.addView(buildTopBar(), LinearLayout.LayoutParams(-1, dp(56)))
+        main.layoutDirection = View.LAYOUT_DIRECTION_RTL
+
+        main.addView(buildTopBlock())
+        main.addView(buildTabs(), LinearLayout.LayoutParams(-1, -2))
 
         listView = ListView(this)
         listView.divider = null
         listView.setBackgroundColor(bg)
-        listView.setPadding(0, dp(4), 0, dp(16))
-        listView.clipToPadding = false
-
-        // صورة الغلاف فوق الفيديوهات (res/drawable/appbanner.jpg أو appbanner.png)
-        val header = buildHeader()
-        if (header != null) listView.addHeaderView(header, null, false)
-
         adapter = VideoAdapter()
         listView.adapter = adapter
-        listView.setOnItemClickListener { parent, _, pos, _ ->
-            val item = parent.getItemAtPosition(pos)
-            if (item is VideoItem) openPlayer(item)
+        listView.setOnItemClickListener { _, _, pos, _ ->
+            if (pos in 0 until shown.size) openPlayer(shown[pos])
         }
-        main.addView(listView, LinearLayout.LayoutParams(-1, 0, 1f))
+
+        val emptyText = TextView(this)
+        emptyText.text = "لا توجد فيديوهات"
+        emptyText.setTextColor(gray)
+        emptyText.textSize = 16f
+        emptyText.gravity = Gravity.CENTER
+
+        val listFrame = FrameLayout(this)
+        listFrame.addView(listView, FrameLayout.LayoutParams(-1, -1))
+        listFrame.addView(emptyText, FrameLayout.LayoutParams(-1, -1))
+        listView.emptyView = emptyText
+        main.addView(listFrame, LinearLayout.LayoutParams(-1, 0, 1f))
+
+        main.addView(buildBottomNav(), LinearLayout.LayoutParams(-1, dp(58)))
         rootFrame.addView(main, FrameLayout.LayoutParams(-1, -1))
 
         buildPlayer()
+        playerRoot.layoutDirection = View.LAYOUT_DIRECTION_LTR
         rootFrame.addView(playerRoot, FrameLayout.LayoutParams(-1, -1))
         playerRoot.visibility = View.GONE
 
@@ -146,67 +173,103 @@ class MainActivity : Activity() {
         checkPermissionAndLoad()
     }
 
-    // ---------------- Header image ----------------
+    // ---------------- Top block (logo / banner / search) ----------------
 
-    private fun buildHeader(): View? {
-        val resId = resources.getIdentifier("appbanner", "drawable", packageName)
-        if (resId == 0) return null
-        val w = screenW() - dp(24)
-        val iv = ImageView(this)
-        iv.setImageResource(resId)
-        iv.adjustViewBounds = true
-        iv.scaleType = ImageView.ScaleType.CENTER_CROP
-        val shape = GradientDrawable()
-        shape.setColor(cardBg)
-        shape.cornerRadius = dp(18).toFloat()
-        iv.background = shape
-        iv.outlineProvider = ViewOutlineProvider.BACKGROUND
-        iv.clipToOutline = true
-        val outer = FrameLayout(this)
-        outer.setPadding(dp(12), dp(8), dp(12), dp(8))
-        outer.addView(iv, FrameLayout.LayoutParams(w, -2))
-        return outer
+    private fun findImageRes(name: String): Int {
+        var id = resources.getIdentifier(name, "drawable", packageName)
+        if (id == 0) id = resources.getIdentifier(name, "mipmap", packageName)
+        return id
     }
 
-    // ---------------- UI: top bar ----------------
+    private fun buildTopBlock(): FrameLayout {
+        val resId = findImageRes("appbanner")
+        hasBanner = resId != 0
+        val h = if (hasBanner) dp(110) else dp(56)
 
-    private fun buildTopBar(): LinearLayout {
-        val bar = LinearLayout(this)
-        bar.orientation = LinearLayout.HORIZONTAL
-        bar.gravity = Gravity.CENTER_VERTICAL
-        bar.setPadding(dp(16), 0, dp(8), 0)
-        bar.setBackgroundColor(bg)
+        val block = FrameLayout(this)
+        block.setBackgroundColor(bg)
+        block.layoutParams = LinearLayout.LayoutParams(-1, h)
 
-        titleView = TextView(this)
-        titleView.text = "OfflineTube"
-        titleView.setTextColor(Color.WHITE)
-        titleView.textSize = 22f
-        titleView.typeface = Typeface.DEFAULT_BOLD
-        bar.addView(titleView, LinearLayout.LayoutParams(0, -2, 1f))
+        if (hasBanner) {
+            val iv = ImageView(this)
+            iv.setImageResource(resId)
+            iv.scaleType = ImageView.ScaleType.CENTER_CROP
+            block.addView(iv, FrameLayout.LayoutParams(-1, -1))
+            val scrim = View(this)
+            scrim.background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.parseColor("#99000000"), Color.TRANSPARENT)
+            )
+            block.addView(scrim, FrameLayout.LayoutParams(-1, dp(70), Gravity.TOP))
+        }
+
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.gravity = Gravity.CENTER_VERTICAL
+        row.setPadding(dp(12), 0, dp(8), 0)
+
+        // شعار على طريقة يوتيوب
+        logo = LinearLayout(this)
+        logo.orientation = LinearLayout.HORIZONTAL
+        logo.gravity = Gravity.CENTER_VERTICAL
+        logo.layoutDirection = View.LAYOUT_DIRECTION_LTR
+        val icon = TextView(this)
+        icon.text = "▶"
+        icon.setTextColor(Color.WHITE)
+        icon.textSize = 12f
+        icon.gravity = Gravity.CENTER
+        val iconShape = GradientDrawable()
+        iconShape.setColor(red)
+        iconShape.cornerRadius = dp(7).toFloat()
+        icon.background = iconShape
+        icon.setPadding(dp(8), dp(3), dp(8), dp(3))
+        logo.addView(icon)
+        val name = TextView(this)
+        name.text = "OfflineTube"
+        name.setTextColor(Color.WHITE)
+        name.textSize = 21f
+        name.typeface = Typeface.DEFAULT_BOLD
+        name.setPadding(dp(6), 0, 0, 0)
+        logo.addView(name)
+        logo.visibility = if (hasBanner) View.INVISIBLE else View.VISIBLE
+        row.addView(logo, LinearLayout.LayoutParams(0, -2, 1f))
 
         searchBox = EditText(this)
         searchBox.hint = "ابحث عن فيديو"
-        searchBox.setHintTextColor(Color.GRAY)
+        searchBox.setHintTextColor(Color.LTGRAY)
         searchBox.setTextColor(Color.WHITE)
         searchBox.isSingleLine = true
         searchBox.visibility = View.GONE
+        val sbShape = GradientDrawable()
+        sbShape.setColor(Color.parseColor("#B3303030"))
+        sbShape.cornerRadius = dp(20).toFloat()
+        searchBox.background = sbShape
+        searchBox.setPadding(dp(14), dp(6), dp(14), dp(6))
         searchBox.addTextChangedListener(object : TextWatcher {
             override fun afterTextChanged(s: Editable?) {
-                applyFilter(s?.toString() ?: "")
+                query = s?.toString() ?: ""
+                refresh()
             }
 
             override fun beforeTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}
             override fun onTextChanged(s: CharSequence?, st: Int, b: Int, c: Int) {}
         })
-        bar.addView(searchBox, LinearLayout.LayoutParams(0, -2, 1f))
+        row.addView(searchBox, LinearLayout.LayoutParams(0, -2, 1f))
 
         val searchBtn = ImageButton(this)
         searchBtn.setImageResource(android.R.drawable.ic_menu_search)
-        searchBtn.setBackgroundColor(Color.TRANSPARENT)
         searchBtn.setColorFilter(Color.WHITE)
+        val btnShape = GradientDrawable()
+        btnShape.shape = GradientDrawable.OVAL
+        btnShape.setColor(Color.parseColor("#80000000"))
+        searchBtn.background = btnShape
         searchBtn.setOnClickListener { toggleSearch() }
-        bar.addView(searchBtn, LinearLayout.LayoutParams(dp(48), dp(48)))
-        return bar
+        val lp = LinearLayout.LayoutParams(dp(42), dp(42))
+        lp.marginStart = dp(8)
+        row.addView(searchBtn, lp)
+
+        block.addView(row, FrameLayout.LayoutParams(-1, dp(56), Gravity.TOP))
+        return block
     }
 
     private fun toggleSearch() {
@@ -214,20 +277,126 @@ class MainActivity : Activity() {
         if (searchBox.visibility == View.VISIBLE) {
             searchBox.setText("")
             searchBox.visibility = View.GONE
-            titleView.visibility = View.VISIBLE
+            logo.visibility = if (hasBanner) View.INVISIBLE else View.VISIBLE
             imm.hideSoftInputFromWindow(searchBox.windowToken, 0)
         } else {
-            titleView.visibility = View.GONE
-            searchBox.visibility = View.VISIBLE
-            searchBox.requestFocus()
-            imm.showSoftInput(searchBox, InputMethodManager.SHOW_IMPLICIT)
+            openSearch()
         }
     }
 
-    private fun applyFilter(q: String) {
+    private fun openSearch() {
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+        logo.visibility = View.GONE
+        searchBox.visibility = View.VISIBLE
+        searchBox.requestFocus()
+        imm.showSoftInput(searchBox, InputMethodManager.SHOW_IMPLICIT)
+    }
+
+    // ---------------- Tabs ----------------
+
+    private fun buildTabs(): View {
+        val scroll = HorizontalScrollView(this)
+        scroll.isHorizontalScrollBarEnabled = false
+        scroll.setBackgroundColor(bg)
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.setPadding(dp(6), 0, dp(6), 0)
+
+        for (i in tabNames.indices) {
+            val col = LinearLayout(this)
+            col.orientation = LinearLayout.VERTICAL
+            val t = TextView(this)
+            t.text = tabNames[i]
+            t.textSize = 16f
+            t.setPadding(dp(14), dp(12), dp(14), dp(10))
+            val line = View(this)
+            col.addView(t)
+            col.addView(line, LinearLayout.LayoutParams(-1, dp(3)))
+            col.setOnClickListener { selectTab(i) }
+            tabTexts.add(t)
+            tabLines.add(line)
+            row.addView(col)
+        }
+        scroll.addView(row)
+        updateTabStyles()
+        return scroll
+    }
+
+    private fun updateTabStyles() {
+        for (i in tabTexts.indices) {
+            val sel = i == tab
+            tabTexts[i].setTextColor(if (sel) Color.WHITE else gray)
+            tabTexts[i].typeface = if (sel) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+            tabLines[i].setBackgroundColor(if (sel) red else Color.TRANSPARENT)
+        }
+    }
+
+    private fun selectTab(i: Int) {
+        tab = i
+        updateTabStyles()
+        refresh()
+        listView.setSelection(0)
+    }
+
+    // ---------------- Bottom nav ----------------
+
+    private fun buildBottomNav(): View {
+        val bar = LinearLayout(this)
+        bar.orientation = LinearLayout.VERTICAL
+        bar.setBackgroundColor(bg)
+
+        val divider = View(this)
+        divider.setBackgroundColor(Color.parseColor("#2A2A2A"))
+        bar.addView(divider, LinearLayout.LayoutParams(-1, dp(1)))
+
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.addView(navItem("🏠", "الرئيسية") {
+            selectTab(0)
+        }, LinearLayout.LayoutParams(0, -1, 1f))
+        row.addView(navItem("🔍", "بحث") {
+            openSearch()
+        }, LinearLayout.LayoutParams(0, -1, 1f))
+        row.addView(navItem("▶", "تابع") {
+            selectTab(1)
+        }, LinearLayout.LayoutParams(0, -1, 1f))
+        bar.addView(row, LinearLayout.LayoutParams(-1, -1))
+        return bar
+    }
+
+    private fun navItem(icon: String, label: String, onClick: () -> Unit): View {
+        val col = LinearLayout(this)
+        col.orientation = LinearLayout.VERTICAL
+        col.gravity = Gravity.CENTER
+        val i = TextView(this)
+        i.text = icon
+        i.textSize = 20f
+        i.setTextColor(Color.WHITE)
+        i.gravity = Gravity.CENTER
+        val l = TextView(this)
+        l.text = label
+        l.textSize = 11f
+        l.setTextColor(Color.WHITE)
+        l.gravity = Gravity.CENTER
+        col.addView(i)
+        col.addView(l)
+        col.setOnClickListener { onClick() }
+        return col
+    }
+
+    // ---------------- Filtering ----------------
+
+    private fun refresh() {
+        val s = query.trim().lowercase()
+        var list: List<VideoItem> = all.filter { s.isEmpty() || it.title.lowercase().contains(s) }
+        list = when (tab) {
+            1 -> list.filter { prefs.getLong("p_" + it.id, 0L) > 0L }
+            2 -> list.sortedByDescending { it.duration }
+            3 -> list.sortedBy { it.duration }
+            else -> list
+        }
         shown.clear()
-        val s = q.trim().lowercase()
-        for (v in all) if (s.isEmpty() || v.title.lowercase().contains(s)) shown.add(v)
+        shown.addAll(list)
         adapter.notifyDataSetChanged()
     }
 
@@ -280,12 +449,12 @@ class MainActivity : Activity() {
             ui.post {
                 all.clear()
                 all.addAll(list)
-                applyFilter(searchBox.text.toString())
+                refresh()
             }
         }
     }
 
-    // ---------------- List adapter (large cards) ----------------
+    // ---------------- List adapter (YouTube-style items) ----------------
 
     inner class VideoAdapter : BaseAdapter() {
         override fun getCount() = shown.size
@@ -294,57 +463,90 @@ class MainActivity : Activity() {
         override fun getViewTypeCount() = 1
         override fun getItemViewType(p: Int) = 0
         override fun getView(p: Int, convertView: View?, parent: ViewGroup?): View {
-            return bigCard(shown[p])
+            return videoItemView(shown[p])
         }
     }
 
     private fun screenW() = resources.displayMetrics.widthPixels
 
-    // Large rounded card: wide thumbnail on top, title + info below
-    private fun bigCard(v: VideoItem): View {
-        val cardW = screenW() - dp(24)
-        val thumbH = cardW * 9 / 16
+    private fun videoItemView(v: VideoItem): View {
+        val w = screenW()
+        val th = w * 9 / 16
 
-        val card = LinearLayout(this)
-        card.orientation = LinearLayout.VERTICAL
-        val shape = GradientDrawable()
-        shape.setColor(cardBg)
-        shape.cornerRadius = dp(18).toFloat()
-        card.background = shape
-        card.outlineProvider = ViewOutlineProvider.BACKGROUND
-        card.clipToOutline = true
-        card.elevation = dp(4).toFloat()
+        val box = LinearLayout(this)
+        box.orientation = LinearLayout.VERTICAL
+        box.setPadding(0, 0, 0, dp(22))
 
-        card.addView(thumbFrame(v, cardW, thumbH), LinearLayout.LayoutParams(cardW, thumbH))
+        // صورة بعرض الشاشة كاملاً
+        box.addView(thumbFrame(v, w, th), LinearLayout.LayoutParams(w, th))
+
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.gravity = Gravity.TOP
+        row.setPadding(dp(12), dp(12), dp(6), 0)
+
+        // دائرة ملوّنة بأول حرف من العنوان
+        val avatar = TextView(this)
+        val letter = v.title.trim().firstOrNull()?.toString()?.uppercase() ?: "V"
+        avatar.text = letter
+        avatar.setTextColor(Color.WHITE)
+        avatar.textSize = 18f
+        avatar.typeface = Typeface.DEFAULT_BOLD
+        avatar.gravity = Gravity.CENTER
+        val aShape = GradientDrawable()
+        aShape.shape = GradientDrawable.OVAL
+        aShape.setColor(avatarColors[Math.abs(v.title.hashCode()) % avatarColors.size])
+        avatar.background = aShape
+        val alp = LinearLayout.LayoutParams(dp(40), dp(40))
+        alp.marginEnd = dp(12)
+        row.addView(avatar, alp)
+
+        val col = LinearLayout(this)
+        col.orientation = LinearLayout.VERTICAL
 
         val title = TextView(this)
         title.text = v.title
         title.setTextColor(Color.WHITE)
-        title.textSize = 17f
-        title.typeface = Typeface.DEFAULT_BOLD
+        title.textSize = 16f
         title.maxLines = 2
         title.ellipsize = android.text.TextUtils.TruncateAt.END
-        title.setPadding(dp(14), dp(12), dp(14), 0)
-        card.addView(title)
+        col.addView(title)
 
-        val info = TextView(this)
         val pos = prefs.getLong("p_" + v.id, 0L)
         val dur = if (v.duration > 0) v.duration else prefs.getLong("d_" + v.id, 0L)
         val pct = if (pos > 0 && dur > 0) ((pos * 100) / dur).toInt().coerceIn(0, 100) else 0
-        info.text = if (pct > 0) "المدة " + fmt(v.duration) + "  •  شوهد " + pct + "%"
-        else "المدة " + fmt(v.duration)
-        info.setTextColor(Color.parseColor("#AAAAAA"))
-        info.textSize = 13f
-        info.setPadding(dp(14), dp(4), dp(14), dp(14))
-        card.addView(info)
+        val sub = TextView(this)
+        sub.text = if (pct > 0) fmt(v.duration) + "  •  شوهد " + pct + "%" else fmt(v.duration)
+        sub.setTextColor(gray)
+        sub.textSize = 13f
+        sub.setPadding(0, dp(3), 0, 0)
+        col.addView(sub)
+        row.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
 
-        val outer = FrameLayout(this)
-        outer.setPadding(dp(12), dp(8), dp(12), dp(8))
-        outer.addView(card, FrameLayout.LayoutParams(cardW, -2))
-        return outer
+        // زر القائمة
+        val dots = TextView(this)
+        dots.text = "•••"
+        dots.setTextColor(Color.WHITE)
+        dots.textSize = 14f
+        dots.setPadding(dp(12), dp(6), dp(12), dp(10))
+        dots.isFocusable = false
+        dots.setOnClickListener {
+            val pm = PopupMenu(this, dots)
+            pm.menu.add(0, 1, 0, "إعادة المشاهدة من البداية")
+            pm.setOnMenuItemClickListener {
+                prefs.edit().remove("p_" + v.id).apply()
+                refresh()
+                true
+            }
+            pm.show()
+        }
+        row.addView(dots)
+
+        box.addView(row)
+        return box
     }
 
-    // Thumbnail + duration badge + colored watched-progress line
+    // Thumbnail + duration badge (bottom-left) + red progress line
     private fun thumbFrame(v: VideoItem, w: Int, h: Int): FrameLayout {
         val f = FrameLayout(this)
         f.setBackgroundColor(Color.parseColor("#222222"))
@@ -359,13 +561,15 @@ class MainActivity : Activity() {
         badge.text = fmt(v.duration)
         badge.setTextColor(Color.WHITE)
         badge.textSize = 12f
+        badge.typeface = Typeface.DEFAULT_BOLD
+        badge.layoutDirection = View.LAYOUT_DIRECTION_LTR
         val bShape = GradientDrawable()
         bShape.setColor(Color.parseColor("#CC000000"))
         bShape.cornerRadius = dp(6).toFloat()
         badge.background = bShape
         badge.setPadding(dp(7), dp(2), dp(7), dp(2))
-        f.addView(badge, FrameLayout.LayoutParams(-2, -2, Gravity.END or Gravity.BOTTOM).apply {
-            rightMargin = dp(10); bottomMargin = dp(12)
+        f.addView(badge, FrameLayout.LayoutParams(-2, -2, Gravity.LEFT or Gravity.BOTTOM).apply {
+            leftMargin = dp(10); bottomMargin = dp(10)
         })
 
         val pos = prefs.getLong("p_" + v.id, 0L)
@@ -374,6 +578,7 @@ class MainActivity : Activity() {
             val frac = (pos.toFloat() / dur.toFloat()).coerceIn(0f, 1f)
             val line = LinearLayout(this)
             line.orientation = LinearLayout.HORIZONTAL
+            line.layoutDirection = View.LAYOUT_DIRECTION_LTR
             val done = View(this)
             done.setBackgroundColor(red)
             val rest = View(this)
@@ -657,7 +862,7 @@ class MainActivity : Activity() {
         isLandscape = false
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         hideSystemBars(false)
-        adapter.notifyDataSetChanged()
+        refresh()
     }
 
     private fun releasePlayer() {
