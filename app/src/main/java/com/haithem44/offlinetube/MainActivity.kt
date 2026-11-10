@@ -79,4 +79,64 @@ object ThumbnailCache {
 
     fun get(key: Long): Bitmap? = memoryCache.get(key)
     fun put(key: Long, bitmap: Bitmap) {
+        if (get(key) == null) memoryCache.put(key, bitmap)
+    }
+}
+
+// --- Main Activity ---
+class MainActivity : Activity() {
+    private val allVideos = ArrayList<Vid>()
+    private val rows = ArrayList<Row>()
+    private val pool = Executors.newFixedThreadPool(3)
+
+    private lateinit var adapter: BaseAdapter
+    private lateinit var input: EditText
+    private lateinit var emptyText: TextView
+    private lateinit var listView: ListView
+    private lateinit var searchBar: LinearLayout
+
+    private fun dp(x: Int) = (x * resources.displayMetrics.density).toInt()
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
         
+        val bg = Color.parseColor("#0F0F0F")
+        window.statusBarColor = bg
+        window.navigationBarColor = bg
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(bg)
+            fitsSystemWindows = true
+        }
+
+        // --- بانر الصورة العلوية ---
+        val bannerImageView = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            adjustViewBounds = true
+            try {
+                setImageResource(R.drawable.app_banner)
+            } catch (e: Exception) {
+                setBackgroundColor(Color.parseColor("#1F1F1F"))
+            }
+        }
+
+        // --- هيدر التطبيق ---
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(16), dp(4), dp(12), dp(8))
+            setBackgroundColor(bg)
+        }
+
+        val subTitle = TextView(this).apply {
+            text = "TUBE TV PRO"
+            setTextColor(Color.WHITE)
+            textSize = 15f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+        }
+
+        val searchIcon = SearchIcon(this).apply { isClickable = true }
+        
+        header.addView(subTitle, LinearLayout.LayoutParams(0, -2, 1f))
+        header.addView(searchIcon, LinearLayout.LayoutParams(dp(40), dp(
