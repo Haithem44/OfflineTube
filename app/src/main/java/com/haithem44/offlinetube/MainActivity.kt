@@ -3,7 +3,7 @@ package com.haithem44.offlinetube
 import android.Manifest
 import android.app.Activity
 import android.content.ContentUris
-import android.content.Context
+importandroid.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -37,7 +37,7 @@ data class Cell(
     val root: View, val img: ImageView, val dur: TextView, val title: TextView,
     val track: LinearLayout, val red: View, val rest: View, val badge: TextView
 )
-data class RowHolder(val cells: List<Cell>, val type: Int)
+data class RowHolder(val cells: List<Cell>)
 
 class SearchIcon(c: Context) : View(c) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -176,7 +176,6 @@ class MainActivity : Activity() {
 
             override fun getView(p: Int, cv: View?, parent: ViewGroup): View {
                 val row = rows[p]
-                // التأكد من مطابقة نوع العرض لمنع تداخل واجهات الفيديوهات والشورتس
                 val view = if (cv != null && cv.tag is Int && cv.tag == row.type) {
                     cv
                 } else {
@@ -187,7 +186,7 @@ class MainActivity : Activity() {
                     setupShortsRow(view, row.items)
                 } else {
                     val h = view.tag as? RowHolder
-                    if (h != null && h.type == row.type) {
+                    if (h != null) {
                         for (i in h.cells.indices) {
                             val c = h.cells[i]
                             if (i < row.items.size) {
@@ -207,4 +206,43 @@ class MainActivity : Activity() {
 
         input.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-            
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                applyFilter(s?.toString() ?: "")
+            }
+        })
+        input.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_SEARCH) {
+                hideKb()
+                true
+            } else false
+        }
+        searchIcon.setOnClickListener {
+            if (searchBar.visibility == View.VISIBLE) {
+                input.setText("")
+                searchBar.visibility = View.GONE
+                hideKb()
+            } else {
+                searchBar.visibility = View.VISIBLE
+                input.requestFocus()
+                input.post {
+                    val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+                    imm.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
+                }
+            }
+        }
+
+        val perm = if (Build.VERSION.SDK_INT >= 33)
+            Manifest.permission.READ_MEDIA_VIDEO
+        else Manifest.permission.READ_EXTERNAL_STORAGE
+        if (checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED) loadVideos()
+        else requestPermissions(arrayOf(perm), 1)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::adapter.isInitialized) adapter.notifyDataSetChanged()
+    }
+
+    override fun onRequestPermissionsResult(rc: Int, p: Array<out String>, r: IntArray) {
+        super.onRequestPermissions
