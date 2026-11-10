@@ -30,3 +30,10 @@ android {
         jvmTarget = "17"
     }
 }
+
+dependencies {
+    // المكتبة الأساسية لعرض القوائم والشبكات (RecyclerView)
+    implementation("androidx.recyclerview:recyclerview:1.3.2")
+    // مكتبة أساسية لأندرويد
+    implementation("androidx.core:core-ktx:1.12.0")
+}
