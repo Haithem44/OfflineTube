@@ -11,8 +11,11 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.graphics.Outline
 import android.graphics.Typeface
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
 import android.media.AudioAttributes
 import android.media.MediaMetadataRetriever
 import android.media.MediaPlayer
@@ -30,10 +33,12 @@ import android.text.TextWatcher
 import android.util.LruCache
 import android.util.Size
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
 import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
 import android.widget.BaseAdapter
@@ -100,7 +105,6 @@ class MainActivity : Activity() {
     }
 
     // دقة الصور: بعرض الشاشة الفعلي (حد أدنى 1080 وأقصى 2160 بكسل)
-    // لو أردت أعلى جودة غيّر 2160 إلى 3840 (يستهلك ذاكرة أكبر)
     private val thumbW: Int by lazy {
         maxOf(resources.displayMetrics.widthPixels, 1080).coerceAtMost(2160)
     }
@@ -190,7 +194,7 @@ class MainActivity : Activity() {
         listView.emptyView = emptyText
         main.addView(listFrame, LinearLayout.LayoutParams(-1, 0, 1f))
 
-        main.addView(buildBottomNav(), LinearLayout.LayoutParams(-1, dp(58)))
+        main.addView(buildBottomNav(), LinearLayout.LayoutParams(-1, dp(68)))
         rootFrame.addView(main, FrameLayout.LayoutParams(-1, -1))
 
         buildPlayer()
@@ -201,6 +205,67 @@ class MainActivity : Activity() {
         setContentView(rootFrame)
         ui.post(ticker)
         checkPermissionAndLoad()
+    }
+
+    // ---------------- 3D helpers ----------------
+
+    // خلفية بارزة: ظل سفلي + حافة مضيئة + وجه متدرّج
+    private fun raised(top: Int, bottom: Int, radius: Int, pressed: Boolean = false): Drawable {
+        val r = dp(radius).toFloat()
+        val shadow = GradientDrawable().apply {
+            setColor(Color.parseColor("#66000000"))
+            cornerRadius = r
+        }
+        val edge = GradientDrawable().apply {
+            setColor(Color.parseColor("#33FFFFFF"))
+            cornerRadius = r
+        }
+        val face = GradientDrawable(
+            GradientDrawable.Orientation.TOP_BOTTOM,
+            if (pressed) intArrayOf(bottom, top) else intArrayOf(top, bottom)
+        ).apply { cornerRadius = r }
+
+        val layers = LayerDrawable(arrayOf<Drawable>(shadow, edge, face))
+        layers.setLayerInset(0, 0, dp(4), 0, 0)
+        layers.setLayerInset(1, 0, 0, 0, dp(3))
+        layers.setLayerInset(2, dp(1), dp(1), dp(1), if (pressed) dp(3) else dp(4))
+        return layers
+    }
+
+    // يضع الخلفية دون أن يتغيّر الـ padding الذي ضبطناه
+    private fun setBgKeepPad(v: View, d: Drawable) {
+        val l = v.paddingLeft
+        val t = v.paddingTop
+        val r = v.paddingRight
+        val b = v.paddingBottom
+        v.background = d
+        v.setPadding(l, t, r, b)
+    }
+
+    // يحوّل أي View إلى زر 3D يغوص عند الضغط
+    private fun make3D(
+        v: View,
+        top: Int = Color.parseColor("#3A3A3A"),
+        bottom: Int = Color.parseColor("#1C1C1C"),
+        radius: Int = 14
+    ) {
+        val normal = raised(top, bottom, radius)
+        val down = raised(top, bottom, radius, true)
+        setBgKeepPad(v, normal)
+        v.elevation = dp(6).toFloat()
+        v.setOnTouchListener { view, e ->
+            when (e.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    setBgKeepPad(view, down)
+                    view.animate().scaleX(0.96f).scaleY(0.96f).setDuration(80).start()
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    setBgKeepPad(view, normal)
+                    view.animate().scaleX(1f).scaleY(1f).setDuration(120).start()
+                }
+            }
+            false // يبقى الضغط (click) يعمل
+        }
     }
 
     // ---------------- Top block (logo / banner / search) ----------------
@@ -289,11 +354,8 @@ class MainActivity : Activity() {
         val searchBtn = ImageButton(this)
         searchBtn.setImageResource(android.R.drawable.ic_menu_search)
         searchBtn.setColorFilter(Color.WHITE)
-        val btnShape = GradientDrawable()
-        btnShape.shape = GradientDrawable.OVAL
-        btnShape.setColor(Color.parseColor("#80000000"))
-        searchBtn.background = btnShape
         searchBtn.setOnClickListener { toggleSearch() }
+        make3D(searchBtn, Color.parseColor("#4A4A4A"), Color.parseColor("#1E1E1E"), 21)
         val lp = LinearLayout.LayoutParams(dp(42), dp(42))
         lp.marginStart = dp(8)
         row.addView(searchBtn, lp)
@@ -337,15 +399,18 @@ class MainActivity : Activity() {
             col.orientation = LinearLayout.VERTICAL
             val t = TextView(this)
             t.text = tabNames[i]
-            t.textSize = 16f
-            t.setPadding(dp(14), dp(12), dp(14), dp(10))
+            t.textSize = 15f
+            t.gravity = Gravity.CENTER
+            t.setPadding(dp(18), dp(8), dp(18), dp(12))
             val line = View(this)
             col.addView(t)
-            col.addView(line, LinearLayout.LayoutParams(-1, dp(3)))
+            col.addView(line, LinearLayout.LayoutParams(-1, 0))
             col.setOnClickListener { selectTab(i) }
             tabTexts.add(t)
             tabLines.add(line)
-            row.addView(col)
+            row.addView(col, LinearLayout.LayoutParams(-2, -2).apply {
+                setMargins(dp(4), dp(6), dp(4), dp(6))
+            })
         }
         scroll.addView(row)
         updateTabStyles()
@@ -357,7 +422,12 @@ class MainActivity : Activity() {
             val sel = i == tab
             tabTexts[i].setTextColor(if (sel) Color.WHITE else gray)
             tabTexts[i].typeface = if (sel) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-            tabLines[i].setBackgroundColor(if (sel) red else Color.TRANSPARENT)
+            setBgKeepPad(
+                tabTexts[i],
+                if (sel) raised(Color.parseColor("#FF3D3D"), Color.parseColor("#B71C1C"), 20)
+                else raised(Color.parseColor("#2E2E2E"), Color.parseColor("#1A1A1A"), 20)
+            )
+            tabLines[i].setBackgroundColor(Color.TRANSPARENT)
         }
     }
 
@@ -369,6 +439,10 @@ class MainActivity : Activity() {
     }
 
     // ---------------- Bottom nav ----------------
+
+    private fun navLp() = LinearLayout.LayoutParams(0, -1, 1f).apply {
+        setMargins(dp(5), dp(5), dp(5), dp(5))
+    }
 
     private fun buildBottomNav(): View {
         val bar = LinearLayout(this)
@@ -383,17 +457,17 @@ class MainActivity : Activity() {
         row.orientation = LinearLayout.HORIZONTAL
         row.addView(navItem("🏠", "الرئيسية") {
             selectTab(0)
-        }, LinearLayout.LayoutParams(0, -1, 1f))
+        }, navLp())
         row.addView(navItem("🔍", "بحث") {
             openSearch()
-        }, LinearLayout.LayoutParams(0, -1, 1f))
+        }, navLp())
         row.addView(navItem("▶", "تابع") {
             selectTab(1)
-        }, LinearLayout.LayoutParams(0, -1, 1f))
+        }, navLp())
         row.addView(navItem("📁", "المجلد") {
             pickFolder()
-        }, LinearLayout.LayoutParams(0, -1, 1f))
-        bar.addView(row, LinearLayout.LayoutParams(-1, -1))
+        }, navLp())
+        bar.addView(row, LinearLayout.LayoutParams(-1, 0, 1f))
         return bar
     }
 
@@ -413,7 +487,9 @@ class MainActivity : Activity() {
         l.gravity = Gravity.CENTER
         col.addView(i)
         col.addView(l)
+        col.setPadding(dp(4), dp(4), dp(4), dp(6))
         col.setOnClickListener { onClick() }
+        make3D(col, Color.parseColor("#333333"), Color.parseColor("#181818"), 16)
         return col
     }
 
@@ -432,6 +508,27 @@ class MainActivity : Activity() {
         shown.clear()
         shown.addAll(list)
         adapter.notifyDataSetChanged()
+    }
+
+    // ---------------- Mixing old / middle / new ----------------
+
+    // القائمة تصل مرتبة من الأحدث للأقدم (DATE_ADDED DESC)
+    // نقسمها إلى جديد / متوسط / قديم ثم نخلطها بالتناوب
+    private fun interleave(list: List<VideoItem>): List<VideoItem> {
+        val n = list.size
+        if (n < 3) return list.shuffled()
+        val third = n / 3
+        val newer = list.subList(0, third).shuffled()
+        val middle = list.subList(third, third * 2).shuffled()
+        val older = list.subList(third * 2, n).shuffled()
+        val out = ArrayList<VideoItem>(n)
+        val max = maxOf(newer.size, middle.size, older.size)
+        for (i in 0 until max) {
+            if (i < newer.size) out.add(newer[i])
+            if (i < older.size) out.add(older[i])
+            if (i < middle.size) out.add(middle[i])
+        }
+        return out
     }
 
     // ---------------- Permission + loading ----------------
@@ -491,9 +588,10 @@ class MainActivity : Activity() {
                 }
             } catch (e: Exception) {
             }
+            val mixed = interleave(list)
             ui.post {
                 all.clear()
-                all.addAll(list)
+                all.addAll(mixed)
                 refresh()
             }
         }
@@ -626,15 +724,34 @@ class MainActivity : Activity() {
     private fun screenW() = resources.displayMetrics.widthPixels
 
     private fun videoItemView(v: VideoItem): View {
-        val w = screenW()
+        // عرض الصورة = عرض الشاشة ناقص هوامش البطاقة
+        val w = screenW() - dp(24)
         val th = w * 9 / 16
 
+        // الحاوية الخارجية (هوامش لتظهر الظلال)
         val box = LinearLayout(this)
         box.orientation = LinearLayout.VERTICAL
-        box.setPadding(0, 0, 0, dp(22))
+        box.setPadding(dp(12), dp(8), dp(12), dp(14))
 
-        // صورة بعرض الشاشة كاملاً
-        box.addView(thumbFrame(v, w, th), LinearLayout.LayoutParams(w, th))
+        // البطاقة البارزة
+        val card = LinearLayout(this)
+        card.orientation = LinearLayout.VERTICAL
+        card.setPadding(0, 0, 0, dp(14))
+        setBgKeepPad(
+            card,
+            raised(Color.parseColor("#2B2B2B"), Color.parseColor("#181818"), 18)
+        )
+        card.elevation = dp(6).toFloat()
+        card.clipToOutline = true
+        card.outlineProvider = object : ViewOutlineProvider() {
+            override fun getOutline(view: View, o: Outline) {
+                o.setRoundRect(0, 0, view.width, view.height, dp(18).toFloat())
+            }
+        }
+        box.addView(card, LinearLayout.LayoutParams(-1, -2))
+
+        // صورة بعرض البطاقة كاملاً
+        card.addView(thumbFrame(v, w, th), LinearLayout.LayoutParams(w, th))
 
         val row = LinearLayout(this)
         row.orientation = LinearLayout.HORIZONTAL
@@ -653,6 +770,7 @@ class MainActivity : Activity() {
         aShape.shape = GradientDrawable.OVAL
         aShape.setColor(avatarColors[Math.abs(v.title.hashCode()) % avatarColors.size])
         avatar.background = aShape
+        avatar.elevation = dp(3).toFloat()
         val alp = LinearLayout.LayoutParams(dp(40), dp(40))
         alp.marginEnd = dp(12)
         row.addView(avatar, alp)
@@ -679,21 +797,26 @@ class MainActivity : Activity() {
         col.addView(sub)
         row.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
 
-        // زر الحذف
+        // زر الحذف (3D أحمر)
         val trash = TextView(this)
         trash.text = "🗑"
         trash.setTextColor(Color.WHITE)
         trash.textSize = 18f
+        trash.gravity = Gravity.CENTER
         trash.setPadding(dp(10), dp(4), dp(10), dp(8))
         trash.isFocusable = false
         trash.setOnClickListener { confirmDelete(v) }
-        row.addView(trash)
+        make3D(trash, Color.parseColor("#C62828"), Color.parseColor("#7F0000"), 12)
+        row.addView(trash, LinearLayout.LayoutParams(-2, -2).apply {
+            setMargins(dp(4), 0, dp(4), dp(4))
+        })
 
-        // زر القائمة
+        // زر القائمة (3D)
         val dots = TextView(this)
         dots.text = "•••"
         dots.setTextColor(Color.WHITE)
         dots.textSize = 14f
+        dots.gravity = Gravity.CENTER
         dots.setPadding(dp(12), dp(6), dp(12), dp(10))
         dots.isFocusable = false
         dots.setOnClickListener {
@@ -706,9 +829,12 @@ class MainActivity : Activity() {
             }
             pm.show()
         }
-        row.addView(dots)
+        make3D(dots, Color.parseColor("#3A3A3A"), Color.parseColor("#1C1C1C"), 12)
+        row.addView(dots, LinearLayout.LayoutParams(-2, -2).apply {
+            setMargins(dp(4), 0, dp(8), dp(4))
+        })
 
-        box.addView(row)
+        card.addView(row)
         return box
     }
 
@@ -908,9 +1034,13 @@ class MainActivity : Activity() {
         back.text = "←"
         back.setTextColor(Color.WHITE)
         back.textSize = 26f
-        back.setPadding(dp(16), dp(8), dp(16), dp(8))
+        back.gravity = Gravity.CENTER
+        back.setPadding(dp(16), dp(6), dp(16), dp(10))
         back.setOnClickListener { closePlayer() }
-        topBar.addView(back)
+        make3D(back, Color.parseColor("#3A3A3A"), Color.parseColor("#1C1C1C"), 14)
+        topBar.addView(back, LinearLayout.LayoutParams(-2, -2).apply {
+            setMargins(dp(8), dp(6), dp(8), dp(6))
+        })
         playerTitle = TextView(this)
         playerTitle.setTextColor(Color.WHITE)
         playerTitle.textSize = 15f
@@ -929,8 +1059,9 @@ class MainActivity : Activity() {
         playPause = TextView(this)
         playPause.text = "⏸"
         playPause.setTextColor(Color.WHITE)
-        playPause.textSize = 24f
-        playPause.setPadding(dp(12), dp(8), dp(12), dp(8))
+        playPause.textSize = 22f
+        playPause.gravity = Gravity.CENTER
+        playPause.setPadding(dp(14), dp(6), dp(14), dp(10))
         playPause.setOnClickListener {
             val p = mp ?: return@setOnClickListener
             if (!prepared) return@setOnClickListener
@@ -940,7 +1071,10 @@ class MainActivity : Activity() {
                 p.start(); playPause.text = "⏸"
             }
         }
-        controls.addView(playPause)
+        make3D(playPause, Color.parseColor("#FF3D3D"), Color.parseColor("#B71C1C"), 24)
+        controls.addView(playPause, LinearLayout.LayoutParams(-2, -2).apply {
+            setMargins(dp(4), dp(2), dp(4), dp(2))
+        })
 
         seekBar = SeekBar(this)
         seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -967,22 +1101,30 @@ class MainActivity : Activity() {
         val fill = TextView(this)
         fill.text = "⤢"
         fill.setTextColor(Color.WHITE)
-        fill.textSize = 24f
-        fill.setPadding(dp(10), dp(8), dp(10), dp(8))
+        fill.textSize = 22f
+        fill.gravity = Gravity.CENTER
+        fill.setPadding(dp(12), dp(6), dp(12), dp(10))
         fill.setOnClickListener {
             fillMode = !fillMode
             fitVideo()
         }
-        controls.addView(fill)
+        make3D(fill, radius = 24)
+        controls.addView(fill, LinearLayout.LayoutParams(-2, -2).apply {
+            setMargins(dp(4), dp(2), dp(4), dp(2))
+        })
 
         // زر تدوير الشاشة
         val fs = TextView(this)
         fs.text = "⛶"
         fs.setTextColor(Color.WHITE)
-        fs.textSize = 24f
-        fs.setPadding(dp(10), dp(8), dp(10), dp(8))
+        fs.textSize = 22f
+        fs.gravity = Gravity.CENTER
+        fs.setPadding(dp(12), dp(6), dp(12), dp(10))
         fs.setOnClickListener { toggleFullscreen() }
-        controls.addView(fs)
+        make3D(fs, radius = 24)
+        controls.addView(fs, LinearLayout.LayoutParams(-2, -2).apply {
+            setMargins(dp(4), dp(2), dp(4), dp(2))
+        })
 
         playerRoot.addView(controls, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
     }
