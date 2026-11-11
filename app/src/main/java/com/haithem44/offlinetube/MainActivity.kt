@@ -2,7 +2,10 @@ package com.haithem44.offlinetube
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
+import android.app.RecoverableSecurityException
 import android.content.Context
+import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -16,9 +19,11 @@ import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.text.Editable
 import android.text.TextWatcher
@@ -42,6 +47,7 @@ import android.widget.ListView
 import android.widget.PopupMenu
 import android.widget.SeekBar
 import android.widget.TextView
+import android.widget.Toast
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.Executors
@@ -65,6 +71,12 @@ class MainActivity : Activity() {
     private var hasBanner = false
     private var tab = 0
     private var query = ""
+
+    // المجلد المختار (مسار كامل) + الفيديو المنتظر حذفه
+    private var folderPath: String = ""
+    private var pendingDelete: VideoItem? = null
+    private val REQ_FOLDER = 101
+    private val REQ_DELETE = 102
 
     // الفهرس 4 = Shorts (فيديوهات مدتها دقيقة أو أقل)
     private val tabNames = arrayOf("الصفحة الرئيسية", "تابع المشاهدة", "الأطول", "الأقصر", "Shorts")
@@ -139,6 +151,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = getSharedPreferences("offlinetube", Context.MODE_PRIVATE)
+        folderPath = prefs.getString("folder_path", "") ?: ""
         window.statusBarColor = bg
         window.navigationBarColor = bg
         if (Build.VERSION.SDK_INT >= 28) {
@@ -377,6 +390,9 @@ class MainActivity : Activity() {
         row.addView(navItem("▶", "تابع") {
             selectTab(1)
         }, LinearLayout.LayoutParams(0, -1, 1f))
+        row.addView(navItem("📁", "المجلد") {
+            pickFolder()
+        }, LinearLayout.LayoutParams(0, -1, 1f))
         bar.addView(row, LinearLayout.LayoutParams(-1, -1))
         return bar
     }
@@ -426,7 +442,7 @@ class MainActivity : Activity() {
         else
             Manifest.permission.READ_EXTERNAL_STORAGE
         if (checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED) {
-            loadVideos()
+            startLoad()
         } else {
             requestPermissions(arrayOf(perm), 1)
         }
@@ -434,10 +450,17 @@ class MainActivity : Activity() {
 
     override fun onRequestPermissionsResult(code: Int, perms: Array<out String>, res: IntArray) {
         super.onRequestPermissionsResult(code, perms, res)
-        if (res.isNotEmpty() && res[0] == PackageManager.PERMISSION_GRANTED) loadVideos()
+        if (res.isNotEmpty() && res[0] == PackageManager.PERMISSION_GRANTED) startLoad()
+    }
+
+    // إن لم يُختر مجلد بعد نطلب اختياره، وإلا نحمّل فيديوهات المجلد المحفوظ
+    private fun startLoad() {
+        if (folderPath.isEmpty()) pickFolder() else loadVideos()
     }
 
     private fun loadVideos() {
+        val folder = folderPath
+        if (folder.isEmpty()) return
         pool.execute {
             val list = ArrayList<VideoItem>()
             val proj = arrayOf(
@@ -445,9 +468,13 @@ class MainActivity : Activity() {
                 MediaStore.Video.Media.DISPLAY_NAME,
                 MediaStore.Video.Media.DURATION
             )
+            // فقط الفيديوهات داخل المجلد المختار (وما تحته من مجلدات فرعية)
+            val esc = folder.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            val sel = MediaStore.Video.Media.DATA + " LIKE ? ESCAPE '\\'"
+            val args = arrayOf("$esc/%")
             try {
                 contentResolver.query(
-                    MediaStore.Video.Media.EXTERNAL_CONTENT_URI, proj, null, null,
+                    MediaStore.Video.Media.EXTERNAL_CONTENT_URI, proj, sel, args,
                     MediaStore.Video.Media.DATE_ADDED + " DESC"
                 )?.use { c ->
                     val iId = c.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
@@ -470,6 +497,117 @@ class MainActivity : Activity() {
                 refresh()
             }
         }
+    }
+
+    // ---------------- Folder picker ----------------
+
+    private fun pickFolder() {
+        try {
+            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), REQ_FOLDER)
+        } catch (e: Exception) {
+            Toast.makeText(this, "تعذّر فتح اختيار المجلد", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // يحوّل رابط المجلد المختار إلى مسار حقيقي مثل /storage/emulated/0/Movies/MyVideos
+    private fun treeToPath(uri: Uri): String? {
+        return try {
+            val docId = DocumentsContract.getTreeDocumentId(uri)
+            val parts = docId.split(":", limit = 2)
+            val vol = parts[0]
+            val rel = if (parts.size > 1) parts[1] else ""
+            val base = if (vol == "primary")
+                Environment.getExternalStorageDirectory().absolutePath
+            else
+                "/storage/$vol"
+            if (rel.isEmpty()) base else "$base/$rel"
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_FOLDER) {
+            if (resultCode == RESULT_OK) {
+                val uri = data?.data
+                val path = if (uri != null) treeToPath(uri) else null
+                if (path != null) {
+                    folderPath = path
+                    prefs.edit().putString("folder_path", path).apply()
+                    loadVideos()
+                } else {
+                    Toast.makeText(this, "تعذّر قراءة المجلد", Toast.LENGTH_SHORT).show()
+                }
+            }
+        } else if (requestCode == REQ_DELETE) {
+            val v = pendingDelete
+            pendingDelete = null
+            if (v != null && resultCode == RESULT_OK) {
+                if (Build.VERSION.SDK_INT == 29) {
+                    // أندرويد 10: بعد موافقة المستخدم نعيد محاولة الحذف
+                    try {
+                        if (contentResolver.delete(v.uri, null, null) > 0) afterDeleted(v)
+                    } catch (e: Exception) {
+                        Toast.makeText(this, "تعذّر الحذف", Toast.LENGTH_SHORT).show()
+                    }
+                } else {
+                    afterDeleted(v)
+                }
+            }
+        }
+    }
+
+    // ---------------- Delete ----------------
+
+    private fun confirmDelete(v: VideoItem) {
+        AlertDialog.Builder(this)
+            .setTitle("حذف الفيديو؟")
+            .setMessage(v.title + "\n\nسيتم حذفه من الهاتف نهائياً.")
+            .setPositiveButton("حذف") { _, _ -> deleteVideo(v) }
+            .setNegativeButton("إلغاء", null)
+            .show()
+    }
+
+    private fun deleteVideo(v: VideoItem) {
+        pendingDelete = v
+        try {
+            if (Build.VERSION.SDK_INT >= 30) {
+                val pi = MediaStore.createDeleteRequest(contentResolver, listOf(v.uri))
+                startIntentSenderForResult(pi.intentSender, REQ_DELETE, null, 0, 0, 0)
+            } else {
+                val n = contentResolver.delete(v.uri, null, null)
+                pendingDelete = null
+                if (n > 0) afterDeleted(v)
+            }
+        } catch (e: Exception) {
+            if (Build.VERSION.SDK_INT >= 29 && e is RecoverableSecurityException) {
+                try {
+                    startIntentSenderForResult(
+                        e.userAction.actionIntent.intentSender, REQ_DELETE, null, 0, 0, 0
+                    )
+                } catch (x: Exception) {
+                    pendingDelete = null
+                    Toast.makeText(this, "تعذّر الحذف", Toast.LENGTH_SHORT).show()
+                }
+            } else {
+                pendingDelete = null
+                Toast.makeText(this, "تعذّر الحذف", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun afterDeleted(v: VideoItem) {
+        all.remove(v)
+        cache.remove(v.id)
+        try {
+            thumbFile(v).delete()
+        } catch (e: Exception) {
+        }
+        prefs.edit().remove("p_" + v.id).remove("d_" + v.id).apply()
+        refresh()
+        Toast.makeText(this, "تم حذف الفيديو", Toast.LENGTH_SHORT).show()
     }
 
     // ---------------- List adapter (YouTube-style items) ----------------
@@ -540,6 +678,16 @@ class MainActivity : Activity() {
         sub.setPadding(0, dp(3), 0, 0)
         col.addView(sub)
         row.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
+
+        // زر الحذف
+        val trash = TextView(this)
+        trash.text = "🗑"
+        trash.setTextColor(Color.WHITE)
+        trash.textSize = 18f
+        trash.setPadding(dp(10), dp(4), dp(10), dp(8))
+        trash.isFocusable = false
+        trash.setOnClickListener { confirmDelete(v) }
+        row.addView(trash)
 
         // زر القائمة
         val dots = TextView(this)
