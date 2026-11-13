@@ -1163,18 +1163,31 @@ class MainActivity : AppCompatActivity() {
 
     class Prefs(ctx: Context) {
         private val sp: SharedPreferences = ctx.getSharedPreferences("offlinetube", Context.MODE_PRIVATE)
-        var folderPath: String get() = sp.getString("folder_path", "") ?: "" set(v) = sp.edit().putString("folder_path", v).apply()
-        var lastTab: Int get() = sp.getInt("last_tab", 0) set(v) = sp.edit().putInt("last_tab", v).apply()
+        
+        var folderPath: String
+            get() = sp.getString("folder_path", "") ?: ""
+            set(v) {
+                sp.edit().putString("folder_path", v).apply()
+            }
+
+        var lastTab: Int
+            get() = sp.getInt("last_tab", 0)
+            set(v) {
+                sp.edit().putInt("last_tab", v).apply()
+            }
+
         fun position(id: Long): Long = sp.getLong("p_$id", 0L)
         fun duration(id: Long): Long = sp.getLong("d_$id", 0L)
         fun watched(id: Long): Boolean = sp.getBoolean("w_$id", false)
         fun lastTouched(id: Long): Long = sp.getLong("t_$id", 0L)
+
         fun savePosition(id: Long, position: Long, duration: Long) {
             val e = sp.edit().putLong("p_$id", position).putLong("d_$id", duration)
             if (duration > 0 && position >= duration - 3000) e.putBoolean("w_$id", true)
             else if (position > 3000) { e.putBoolean("w_$id", false); e.putLong("t_$id", System.currentTimeMillis()) }
             e.apply()
         }
+
         fun markWatched(id: Long) = sp.edit().putBoolean("w_$id", true).apply()
         fun resetProgress(id: Long) = sp.edit().remove("p_$id").remove("w_$id").apply()
         fun clearVideo(id: Long) = sp.edit().remove("p_$id").remove("d_$id").remove("w_$id").remove("t_$id").apply()
