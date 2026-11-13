@@ -77,6 +77,12 @@ class MainActivity : Activity() {
     private var tab = 0
     private var query = ""
 
+    // التحديث (السحب للأسفل)
+    private lateinit var refreshBar: TextView
+    private var refreshing = false
+    private var touchStartY = 0f
+    private var pulling = false
+
     // المجلد المختار (مسار كامل) + الفيديو المنتظر حذفه
     private var folderPath: String = ""
     private var pendingDelete: VideoItem? = null
@@ -192,6 +198,51 @@ class MainActivity : Activity() {
         listFrame.addView(listView, FrameLayout.LayoutParams(-1, -1))
         listFrame.addView(emptyText, FrameLayout.LayoutParams(-1, -1))
         listView.emptyView = emptyText
+
+        // شريط "جارٍ التحديث"
+        refreshBar = TextView(this)
+        refreshBar.text = "↻ جارٍ التحديث..."
+        refreshBar.setTextColor(Color.WHITE)
+        refreshBar.textSize = 14f
+        refreshBar.gravity = Gravity.CENTER
+        refreshBar.setPadding(dp(16), dp(8), dp(16), dp(8))
+        refreshBar.background = GradientDrawable().apply {
+            setColor(red)
+            cornerRadius = dp(20).toFloat()
+        }
+        refreshBar.elevation = dp(8).toFloat()
+        refreshBar.visibility = View.GONE
+        listFrame.addView(
+            refreshBar,
+            FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply {
+                topMargin = dp(10)
+            }
+        )
+
+        // السحب للأسفل من أعلى القائمة للتحديث
+        listView.setOnTouchListener { _, e ->
+            when (e.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    touchStartY = e.y
+                    pulling = false
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val atTop = listView.childCount == 0 ||
+                        (listView.firstVisiblePosition == 0 && listView.getChildAt(0).top >= 0)
+                    if (atTop && !refreshing && e.y - touchStartY > dp(120)) {
+                        pulling = true
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (pulling) {
+                        pulling = false
+                        reloadVideos()
+                    }
+                }
+            }
+            false
+        }
+
         main.addView(listFrame, LinearLayout.LayoutParams(-1, 0, 1f))
 
         main.addView(buildBottomNav(), LinearLayout.LayoutParams(-1, dp(68)))
@@ -464,6 +515,9 @@ class MainActivity : Activity() {
         row.addView(navItem("▶", "تابع") {
             selectTab(1)
         }, navLp())
+        row.addView(navItem("🔄", "تحديث") {
+            reloadVideos()
+        }, navLp())
         row.addView(navItem("📁", "المجلد") {
             pickFolder()
         }, navLp())
@@ -557,7 +611,10 @@ class MainActivity : Activity() {
 
     private fun loadVideos() {
         val folder = folderPath
-        if (folder.isEmpty()) return
+        if (folder.isEmpty()) {
+            finishRefresh()
+            return
+        }
         pool.execute {
             val list = ArrayList<VideoItem>()
             val proj = arrayOf(
@@ -593,8 +650,33 @@ class MainActivity : Activity() {
                 all.clear()
                 all.addAll(mixed)
                 refresh()
+                finishRefresh()
             }
         }
+    }
+
+    // ---------------- Refresh ----------------
+
+    private fun reloadVideos() {
+        if (refreshing) return
+        if (folderPath.isEmpty()) {
+            pickFolder()
+            return
+        }
+        refreshing = true
+        refreshBar.text = "↻ جارٍ التحديث..."
+        refreshBar.visibility = View.VISIBLE
+        loadVideos()
+    }
+
+    private fun finishRefresh() {
+        if (!refreshing) return
+        refreshing = false
+        refreshBar.text = "✓ تم التحديث"
+        ui.postDelayed({
+            refreshBar.visibility = View.GONE
+            refreshBar.text = "↻ جارٍ التحديث..."
+        }, 700)
     }
 
     // ---------------- Folder picker ----------------
@@ -1304,6 +1386,14 @@ class MainActivity : Activity() {
             e.putBoolean("w_" + v.id, false)
         }
         e.apply()
+    }
+
+    // تحديث تلقائي عند العودة للتطبيق (ليس أثناء تشغيل فيديو)
+    override fun onResume() {
+        super.onResume()
+        if (folderPath.isNotEmpty() && all.isNotEmpty() && playerRoot.visibility != View.VISIBLE) {
+            loadVideos()
+        }
     }
 
     override fun onBackPressed() {
