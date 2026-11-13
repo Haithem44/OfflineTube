@@ -10,8 +10,14 @@ import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorFilter
 import android.graphics.Outline
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.PixelFormat
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
@@ -40,6 +46,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import android.view.WindowManager
+import android.view.animation.DecelerateInterpolator
 import android.view.inputmethod.InputMethodManager
 import android.widget.BaseAdapter
 import android.widget.EditText
@@ -59,11 +66,106 @@ import java.util.concurrent.Executors
 
 data class VideoItem(val id: Long, val title: String, val duration: Long, val uri: Uri)
 
+// ---------------- أيقونات مرسومة بالكود (موحّدة على كل الهواتف) ----------------
+
+class IconDrawable(private val kind: Int, initial: Int) : Drawable() {
+
+    companion object {
+        const val HOME = 0
+        const val SEARCH = 1
+        const val PLAY = 2
+        const val REFRESH = 3
+        const val FOLDER = 4
+        const val TRASH = 5
+        const val BACK = 6
+    }
+
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+        color = initial
+    }
+
+    fun setIconColor(c: Int) {
+        paint.color = c
+        invalidateSelf()
+    }
+
+    override fun draw(canvas: Canvas) {
+        val b = bounds
+        val size = minOf(b.width(), b.height()).toFloat()
+        if (size <= 0f) return
+        val s = size / 24f
+        canvas.save()
+        canvas.translate(
+            b.left + (b.width() - size) / 2f,
+            b.top + (b.height() - size) / 2f
+        )
+        canvas.scale(s, s)
+        paint.strokeWidth = 2f
+        val p = Path()
+        when (kind) {
+            HOME -> {
+                p.moveTo(3f, 11f); p.lineTo(12f, 3f); p.lineTo(21f, 11f)
+                p.moveTo(5f, 10f); p.lineTo(5f, 20f); p.lineTo(10f, 20f)
+                p.lineTo(10f, 14f); p.lineTo(14f, 14f); p.lineTo(14f, 20f)
+                p.lineTo(19f, 20f); p.lineTo(19f, 10f)
+            }
+            SEARCH -> {
+                canvas.drawCircle(10.5f, 10.5f, 6.5f, paint)
+                p.moveTo(15.3f, 15.3f); p.lineTo(21f, 21f)
+            }
+            PLAY -> {
+                p.moveTo(8f, 5f); p.lineTo(19f, 12f); p.lineTo(8f, 19f); p.close()
+            }
+            REFRESH -> {
+                canvas.drawArc(RectF(4f, 4f, 20f, 20f), 25f, 300f, false, paint)
+                p.moveTo(18.5f, 2.5f); p.lineTo(18.5f, 7.5f); p.lineTo(13.5f, 7.5f)
+            }
+            FOLDER -> {
+                p.moveTo(3f, 6f); p.lineTo(9f, 6f); p.lineTo(11f, 8f)
+                p.lineTo(21f, 8f); p.lineTo(21f, 19f); p.lineTo(3f, 19f); p.close()
+            }
+            TRASH -> {
+                p.moveTo(4f, 7f); p.lineTo(20f, 7f)
+                p.moveTo(10f, 7f); p.lineTo(10f, 4f); p.lineTo(14f, 4f); p.lineTo(14f, 7f)
+                p.moveTo(6.5f, 7f); p.lineTo(7.5f, 20f); p.lineTo(16.5f, 20f); p.lineTo(17.5f, 7f)
+                p.moveTo(10f, 11f); p.lineTo(10f, 16f)
+                p.moveTo(14f, 11f); p.lineTo(14f, 16f)
+            }
+            BACK -> {
+                p.moveTo(20f, 12f); p.lineTo(4f, 12f)
+                p.moveTo(10f, 6f); p.lineTo(4f, 12f); p.lineTo(10f, 18f)
+            }
+            else -> {
+            }
+        }
+        canvas.drawPath(p, paint)
+        canvas.restore()
+    }
+
+    override fun setAlpha(alpha: Int) {
+        paint.alpha = alpha
+        invalidateSelf()
+    }
+
+    override fun setColorFilter(colorFilter: ColorFilter?) {
+        paint.colorFilter = colorFilter
+        invalidateSelf()
+    }
+
+    @Suppress("DEPRECATION")
+    override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+}
+
 class MainActivity : Activity() {
 
     private val bg = Color.parseColor("#0F0F0F")
     private val red = Color.parseColor("#FF0000")
     private val gray = Color.parseColor("#AAAAAA")
+    private val navActive = Color.parseColor("#FF4D4D")
+    private val navInactive = Color.parseColor("#E0E0E0")
 
     private val all = ArrayList<VideoItem>()
     private val shown = ArrayList<VideoItem>()
@@ -94,6 +196,14 @@ class MainActivity : Activity() {
     private val tabTexts = ArrayList<TextView>()
     private val tabLines = ArrayList<View>()
 
+    // عناصر الشريط السفلي (لتلوين العنصر النشط)
+    private class NavRef(val tabIdx: Int, val icon: IconDrawable, val label: TextView)
+
+    private val navRefs = ArrayList<NavRef>()
+
+    // البطاقات التي ظهرت بحركة الدخول مسبقاً (حتى لا تتكرر الحركة)
+    private val animatedIds = HashSet<Long>()
+
     private val avatarColors = intArrayOf(
         Color.parseColor("#E53935"), Color.parseColor("#8E24AA"),
         Color.parseColor("#3949AB"), Color.parseColor("#00897B"),
@@ -117,6 +227,34 @@ class MainActivity : Activity() {
     private val thumbH: Int by lazy { thumbW * 9 / 16 }
     private val thumbDir: File by lazy {
         File(cacheDir, "thumbs_hq").apply { mkdirs() }
+    }
+
+    // ---------------- الخط العربي ----------------
+    // ضع الملفين في res/font باسم: cairo_regular.ttf و cairo_bold.ttf
+    // إن لم يوجدا يستمر التطبيق بالخط الافتراضي دون أي خطأ
+
+    private fun loadFont(name: String): Typeface? {
+        if (Build.VERSION.SDK_INT < 26) return null
+        return try {
+            val id = resources.getIdentifier(name, "font", packageName)
+            if (id == 0) null else resources.getFont(id)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private val fontRegular: Typeface by lazy { loadFont("cairo_regular") ?: Typeface.DEFAULT }
+    private val fontBold: Typeface by lazy { loadFont("cairo_bold") ?: Typeface.DEFAULT_BOLD }
+
+    // يطبّق الخط على كل النصوص داخل الواجهة مع الحفاظ على الخط العريض
+    private fun applyFont(v: View) {
+        if (v is TextView) {
+            val bold = v.typeface === fontBold || v.typeface?.isBold == true
+            v.typeface = if (bold) fontBold else fontRegular
+        }
+        if (v is ViewGroup) {
+            for (i in 0 until v.childCount) applyFont(v.getChildAt(i))
+        }
     }
 
     // Player
@@ -254,6 +392,7 @@ class MainActivity : Activity() {
         playerRoot.visibility = View.GONE
 
         setContentView(rootFrame)
+        applyFont(rootFrame)
         ui.post(ticker)
         checkPermissionAndLoad()
     }
@@ -403,8 +542,9 @@ class MainActivity : Activity() {
         row.addView(searchBox, LinearLayout.LayoutParams(0, -2, 1f))
 
         val searchBtn = ImageButton(this)
-        searchBtn.setImageResource(android.R.drawable.ic_menu_search)
-        searchBtn.setColorFilter(Color.WHITE)
+        searchBtn.scaleType = ImageView.ScaleType.FIT_CENTER
+        searchBtn.setImageDrawable(IconDrawable(IconDrawable.SEARCH, Color.WHITE))
+        searchBtn.setPadding(dp(10), dp(8), dp(10), dp(12))
         searchBtn.setOnClickListener { toggleSearch() }
         make3D(searchBtn, Color.parseColor("#4A4A4A"), Color.parseColor("#1E1E1E"), 21)
         val lp = LinearLayout.LayoutParams(dp(42), dp(42))
@@ -472,7 +612,7 @@ class MainActivity : Activity() {
         for (i in tabTexts.indices) {
             val sel = i == tab
             tabTexts[i].setTextColor(if (sel) Color.WHITE else gray)
-            tabTexts[i].typeface = if (sel) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+            tabTexts[i].typeface = if (sel) fontBold else fontRegular
             setBgKeepPad(
                 tabTexts[i],
                 if (sel) raised(Color.parseColor("#FF3D3D"), Color.parseColor("#B71C1C"), 20)
@@ -480,6 +620,7 @@ class MainActivity : Activity() {
             )
             tabLines[i].setBackgroundColor(Color.TRANSPARENT)
         }
+        updateNavStyles()
     }
 
     private fun selectTab(i: Int) {
@@ -506,45 +647,57 @@ class MainActivity : Activity() {
 
         val row = LinearLayout(this)
         row.orientation = LinearLayout.HORIZONTAL
-        row.addView(navItem("🏠", "الرئيسية") {
+        row.addView(navItem(IconDrawable.HOME, "الرئيسية", 0) {
             selectTab(0)
         }, navLp())
-        row.addView(navItem("🔍", "بحث") {
+        row.addView(navItem(IconDrawable.SEARCH, "بحث", -1) {
             openSearch()
         }, navLp())
-        row.addView(navItem("▶", "تابع") {
+        row.addView(navItem(IconDrawable.PLAY, "تابع", 1) {
             selectTab(1)
         }, navLp())
-        row.addView(navItem("🔄", "تحديث") {
+        row.addView(navItem(IconDrawable.REFRESH, "تحديث", -1) {
             reloadVideos()
         }, navLp())
-        row.addView(navItem("📁", "المجلد") {
+        row.addView(navItem(IconDrawable.FOLDER, "المجلد", -1) {
             pickFolder()
         }, navLp())
         bar.addView(row, LinearLayout.LayoutParams(-1, 0, 1f))
+        updateNavStyles()
         return bar
     }
 
-    private fun navItem(icon: String, label: String, onClick: () -> Unit): View {
+    private fun navItem(kind: Int, label: String, tabIdx: Int, onClick: () -> Unit): View {
         val col = LinearLayout(this)
         col.orientation = LinearLayout.VERTICAL
         col.gravity = Gravity.CENTER
-        val i = TextView(this)
-        i.text = icon
-        i.textSize = 20f
-        i.setTextColor(Color.WHITE)
-        i.gravity = Gravity.CENTER
+
+        val icon = IconDrawable(kind, navInactive)
+        val iv = ImageView(this)
+        iv.setImageDrawable(icon)
+
         val l = TextView(this)
         l.text = label
         l.textSize = 11f
-        l.setTextColor(Color.WHITE)
+        l.setTextColor(navInactive)
         l.gravity = Gravity.CENTER
-        col.addView(i)
-        col.addView(l)
+
+        col.addView(iv, LinearLayout.LayoutParams(dp(24), dp(24)))
+        col.addView(l, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
         col.setPadding(dp(4), dp(4), dp(4), dp(6))
         col.setOnClickListener { onClick() }
         make3D(col, Color.parseColor("#333333"), Color.parseColor("#181818"), 16)
+        navRefs.add(NavRef(tabIdx, icon, l))
         return col
+    }
+
+    // يلوّن عنصر الشريط السفلي النشط بالأحمر
+    private fun updateNavStyles() {
+        for (n in navRefs) {
+            val c = if (n.tabIdx == tab) navActive else navInactive
+            n.icon.setIconColor(c)
+            n.label.setTextColor(c)
+        }
     }
 
     // ---------------- Filtering ----------------
@@ -879,17 +1032,15 @@ class MainActivity : Activity() {
         col.addView(sub)
         row.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
 
-        // زر الحذف (3D أحمر)
-        val trash = TextView(this)
-        trash.text = "🗑"
-        trash.setTextColor(Color.WHITE)
-        trash.textSize = 18f
-        trash.gravity = Gravity.CENTER
-        trash.setPadding(dp(10), dp(4), dp(10), dp(8))
+        // زر الحذف (3D أحمر) بأيقونة سلة مرسومة
+        val trash = ImageView(this)
+        trash.scaleType = ImageView.ScaleType.FIT_CENTER
+        trash.setImageDrawable(IconDrawable(IconDrawable.TRASH, Color.WHITE))
+        trash.setPadding(dp(10), dp(8), dp(10), dp(12))
         trash.isFocusable = false
         trash.setOnClickListener { confirmDelete(v) }
         make3D(trash, Color.parseColor("#C62828"), Color.parseColor("#7F0000"), 12)
-        row.addView(trash, LinearLayout.LayoutParams(-2, -2).apply {
+        row.addView(trash, LinearLayout.LayoutParams(dp(40), dp(42)).apply {
             setMargins(dp(4), 0, dp(4), dp(4))
         })
 
@@ -917,6 +1068,21 @@ class MainActivity : Activity() {
         })
 
         card.addView(row)
+
+        // الخط العربي على كل نصوص البطاقة
+        applyFont(box)
+
+        // حركة دخول: تلاشي + انزلاق خفيف (مرة واحدة لكل فيديو)
+        if (animatedIds.add(v.id)) {
+            box.alpha = 0f
+            box.translationY = dp(24).toFloat()
+            box.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .setDuration(280)
+                .setInterpolator(DecelerateInterpolator())
+                .start()
+        }
         return box
     }
 
@@ -1138,15 +1304,13 @@ class MainActivity : Activity() {
         topBar.orientation = LinearLayout.HORIZONTAL
         topBar.gravity = Gravity.CENTER_VERTICAL
         topBar.setBackgroundColor(Color.parseColor("#88000000"))
-        val back = TextView(this)
-        back.text = "←"
-        back.setTextColor(Color.WHITE)
-        back.textSize = 26f
-        back.gravity = Gravity.CENTER
-        back.setPadding(dp(16), dp(6), dp(16), dp(10))
+        val back = ImageView(this)
+        back.scaleType = ImageView.ScaleType.FIT_CENTER
+        back.setImageDrawable(IconDrawable(IconDrawable.BACK, Color.WHITE))
+        back.setPadding(dp(11), dp(9), dp(11), dp(13))
         back.setOnClickListener { closePlayer() }
         make3D(back, Color.parseColor("#3A3A3A"), Color.parseColor("#1C1C1C"), 14)
-        topBar.addView(back, LinearLayout.LayoutParams(-2, -2).apply {
+        topBar.addView(back, LinearLayout.LayoutParams(dp(46), dp(48)).apply {
             setMargins(dp(8), dp(6), dp(8), dp(6))
         })
         playerTitle = TextView(this)
