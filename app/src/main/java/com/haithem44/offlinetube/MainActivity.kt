@@ -941,6 +941,7 @@ class MainActivity : AppCompatActivity() {
         })
         playerRoot.addView(surfaceView, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
 
+        // ✅ إصلاح: إضافة طبقة شفافة لاستقبال الإيماءات (حتى لا تسرق النقرات من الأزرار)
         gestures = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e: MotionEvent): Boolean { gestureMode = 0; return true }
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean { onPlayerTap(); return true }
@@ -957,7 +958,11 @@ class MainActivity : AppCompatActivity() {
                 return true
             }
         })
-        playerRoot.setOnTouchListener { _, e -> gestures.onTouchEvent(e); true }
+        
+        val gestureOverlay = View(this)
+        gestureOverlay.setOnTouchListener { _, e -> gestures.onTouchEvent(e); true }
+        playerRoot.addView(gestureOverlay, FrameLayout.LayoutParams(-1, -1))
+
         playerRoot.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> fitVideo() }
 
         topBar = LinearLayout(this); topBar.orientation = LinearLayout.HORIZONTAL; topBar.gravity = Gravity.CENTER_VERTICAL; topBar.setBackgroundColor(Color.parseColor("#88000000"))
@@ -985,8 +990,18 @@ class MainActivity : AppCompatActivity() {
         playPause = iconBtn(IconDrawable.PAUSE, Color.parseColor("#FF3D3D"), Color.parseColor("#B71C1C")) {
             try {
                 val p = mp
-                if (p != null && prepared) { if (p.isPlaying) { p.pause(); setPlayIcon(false) } else { p.start(); setPlayIcon(true) } }
-            } catch (_: Exception) {}
+                if (p != null && prepared) { 
+                    if (p.isPlaying) { p.pause(); setPlayIcon(false) } 
+                    else { 
+                        if (surfaceView.holder.surface.isValid) p.setDisplay(surfaceView.holder)
+                        p.start(); setPlayIcon(true) 
+                    } 
+                } else {
+                    current?.let { startPlayback(it) }
+                }
+            } catch (e: Exception) {
+                Toast.makeText(this@MainActivity, "فشل التشغيل: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
         }
         btnRow.addView(playPause, LinearLayout.LayoutParams(dp(56), dp(58)).apply { setMargins(dp(5), dp(2), dp(5), dp(2)) })
 
@@ -1097,7 +1112,9 @@ class MainActivity : AppCompatActivity() {
         try {
             p.setAudioAttributes(AudioAttributes.Builder().setContentType(AudioAttributes.CONTENT_TYPE_MOVIE).setUsage(AudioAttributes.USAGE_MEDIA).build())
             try { p.setWakeMode(this@MainActivity.applicationContext, PowerManager.PARTIAL_WAKE_LOCK) } catch (_: Exception) {}
-            p.setDataSource(this, v.uri); p.setDisplay(surfaceView.holder)
+            p.setDataSource(this, v.uri); 
+            if (surfaceView.holder.surface.isValid) p.setDisplay(surfaceView.holder)
+            
             p.setOnVideoSizeChangedListener { _, w, h ->
                 videoW = w; videoH = h
                 if (w > h && !isLandscape) { isLandscape = true; requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE }
@@ -1106,14 +1123,25 @@ class MainActivity : AppCompatActivity() {
             p.setOnPreparedListener { m ->
                 try {
                     prepared = true; seekBar.max = m.duration
+                    if (surfaceView.holder.surface.isValid) m.setDisplay(surfaceView.holder)
                     val saved = prefs.position(v.id); if (saved > 0 && saved < m.duration - 3000) m.seekTo(saved.toInt())
                     m.start(); setPlayIcon(true); if (speedIdx != 2) applySpeed()
-                } catch (_: Exception) { setPlayIcon(false) }
+                } catch (e: Exception) { 
+                    setPlayIcon(false)
+                    Toast.makeText(this@MainActivity, "فشل بدء التشغيل: ${e.message}", Toast.LENGTH_SHORT).show() 
+                }
             }
             p.setOnCompletionListener { prefs.savePosition(v.id, 0L, it.duration.toLong()); prefs.markWatched(v.id); setPlayIcon(false) }
-            p.setOnErrorListener { _, _, _ -> setPlayIcon(false); true }
+            p.setOnErrorListener { _, what, extra -> 
+                setPlayIcon(false)
+                Toast.makeText(this@MainActivity, "خطأ في الفيديو: $what ($extra)", Toast.LENGTH_SHORT).show()
+                true 
+            }
             p.prepareAsync()
-        } catch (_: Exception) { setPlayIcon(false) }
+        } catch (e: Exception) { 
+            setPlayIcon(false) 
+            Toast.makeText(this@MainActivity, "خطأ في التحميل: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun fitVideo() {
