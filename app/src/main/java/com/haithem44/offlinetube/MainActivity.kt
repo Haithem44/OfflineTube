@@ -703,7 +703,7 @@ class MainActivity : Activity() {
             thumbFile(v).delete()
         } catch (e: Exception) {
         }
-        prefs.edit().remove("p_" + v.id).remove("d_" + v.id).apply()
+        prefs.edit().remove("p_" + v.id).remove("d_" + v.id).remove("w_" + v.id).apply()
         refresh()
         Toast.makeText(this, "تم حذف الفيديو", Toast.LENGTH_SHORT).show()
     }
@@ -823,7 +823,7 @@ class MainActivity : Activity() {
             val pm = PopupMenu(this, dots)
             pm.menu.add(0, 1, 0, "إعادة المشاهدة من البداية")
             pm.setOnMenuItemClickListener {
-                prefs.edit().remove("p_" + v.id).apply()
+                prefs.edit().remove("p_" + v.id).remove("w_" + v.id).apply()
                 refresh()
                 true
             }
@@ -839,6 +839,7 @@ class MainActivity : Activity() {
     }
 
     // Thumbnail + duration badge (bottom-left) + red progress line
+    // + "تم المشاهدة" (top-left) / remaining time (top-right)
     private fun thumbFrame(v: VideoItem, w: Int, h: Int): FrameLayout {
         val f = FrameLayout(this)
         f.setBackgroundColor(Color.parseColor("#222222"))
@@ -878,6 +879,31 @@ class MainActivity : Activity() {
             line.addView(done, LinearLayout.LayoutParams(0, -1, frac))
             line.addView(rest, LinearLayout.LayoutParams(0, -1, 1f - frac))
             f.addView(line, FrameLayout.LayoutParams(-1, dp(4), Gravity.BOTTOM))
+        }
+
+        // "تم المشاهدة" أعلى اليسار + الوقت المتبقي أعلى اليمين
+        val watched = prefs.getBoolean("w_" + v.id, false)
+        val tagText: String? = when {
+            watched -> "تم المشاهدة"
+            pos > 0 && dur > 0 && pos < dur - 3000 -> "-" + fmt(dur - pos)
+            else -> null
+        }
+        if (tagText != null) {
+            val tg = TextView(this)
+            tg.text = tagText
+            tg.setTextColor(Color.WHITE)
+            tg.textSize = 11f
+            tg.typeface = Typeface.DEFAULT_BOLD
+            tg.layoutDirection = View.LAYOUT_DIRECTION_LTR
+            val tgShape = GradientDrawable()
+            tgShape.setColor(Color.parseColor("#99000000"))
+            tgShape.cornerRadius = dp(6).toFloat()
+            tg.background = tgShape
+            tg.setPadding(dp(7), dp(2), dp(7), dp(2))
+            val side = if (watched) Gravity.LEFT else Gravity.RIGHT
+            f.addView(tg, FrameLayout.LayoutParams(-2, -2, side or Gravity.TOP).apply {
+                leftMargin = dp(10); rightMargin = dp(10); topMargin = dp(10)
+            })
         }
         return f
     }
@@ -1186,6 +1212,7 @@ class MainActivity : Activity() {
             }
             p.setOnCompletionListener {
                 savePos(v, 0L, it.duration.toLong())
+                prefs.edit().putBoolean("w_" + v.id, true).apply()
                 playPause.text = "▶"
             }
             p.setOnErrorListener { _, _, _ ->
@@ -1270,7 +1297,13 @@ class MainActivity : Activity() {
     }
 
     private fun savePos(v: VideoItem, pos: Long, dur: Long) {
-        prefs.edit().putLong("p_" + v.id, pos).putLong("d_" + v.id, dur).apply()
+        val e = prefs.edit().putLong("p_" + v.id, pos).putLong("d_" + v.id, dur)
+        if (dur > 0 && pos >= dur - 3000) {
+            e.putBoolean("w_" + v.id, true)
+        } else if (pos > 3000) {
+            e.putBoolean("w_" + v.id, false)
+        }
+        e.apply()
     }
 
     override fun onBackPressed() {
