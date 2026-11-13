@@ -1,28 +1,35 @@
 package com.haithem44.offlinetube
 
 import android.Manifest
+import android.animation.ValueAnimator
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.PictureInPictureParams
 import android.app.RecoverableSecurityException
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorFilter
+import android.graphics.LinearGradient
+import android.graphics.Matrix
 import android.graphics.Outline
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
 import android.media.AudioAttributes
+import android.media.AudioManager
 import android.media.MediaMetadataRetriever
 import android.media.MediaPlayer
 import android.net.Uri
@@ -34,11 +41,15 @@ import android.os.Looper
 import android.os.PowerManager
 import android.provider.DocumentsContract
 import android.provider.MediaStore
+import android.provider.Settings
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.LruCache
+import android.util.Rational
 import android.util.Size
+import android.view.GestureDetector
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -47,6 +58,7 @@ import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
+import android.view.animation.LinearInterpolator
 import android.view.inputmethod.InputMethodManager
 import android.widget.BaseAdapter
 import android.widget.EditText
@@ -78,6 +90,13 @@ class IconDrawable(private val kind: Int, initial: Int) : Drawable() {
         const val FOLDER = 4
         const val TRASH = 5
         const val BACK = 6
+        const val LOCK = 7
+        const val UNLOCK = 8
+        const val PAUSE = 9
+        const val PLAY_FILLED = 10
+        const val EXPAND = 11
+        const val ROTATE = 12
+        const val PIP = 13
     }
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -104,6 +123,7 @@ class IconDrawable(private val kind: Int, initial: Int) : Drawable() {
         )
         canvas.scale(s, s)
         paint.strokeWidth = 2f
+        paint.style = Paint.Style.STROKE
         val p = Path()
         when (kind) {
             HOME -> {
@@ -138,6 +158,46 @@ class IconDrawable(private val kind: Int, initial: Int) : Drawable() {
                 p.moveTo(20f, 12f); p.lineTo(4f, 12f)
                 p.moveTo(10f, 6f); p.lineTo(4f, 12f); p.lineTo(10f, 18f)
             }
+            LOCK -> {
+                canvas.drawRoundRect(RectF(5f, 11f, 19f, 21f), 2f, 2f, paint)
+                p.moveTo(8f, 11f); p.lineTo(8f, 8f)
+                p.arcTo(RectF(8f, 4f, 16f, 12f), 180f, 180f)
+                p.lineTo(16f, 11f)
+            }
+            UNLOCK -> {
+                canvas.drawRoundRect(RectF(5f, 11f, 19f, 21f), 2f, 2f, paint)
+                p.moveTo(8f, 11f); p.lineTo(8f, 8f)
+                p.arcTo(RectF(8f, 4f, 16f, 12f), 180f, 180f)
+            }
+            PAUSE -> {
+                paint.style = Paint.Style.FILL
+                canvas.drawRoundRect(RectF(6f, 4f, 10.5f, 20f), 1.5f, 1.5f, paint)
+                canvas.drawRoundRect(RectF(13.5f, 4f, 18f, 20f), 1.5f, 1.5f, paint)
+                paint.style = Paint.Style.STROKE
+            }
+            PLAY_FILLED -> {
+                paint.style = Paint.Style.FILL
+                p.moveTo(7f, 4.5f); p.lineTo(19f, 12f); p.lineTo(7f, 19.5f); p.close()
+                canvas.drawPath(p, paint)
+                p.reset()
+                paint.style = Paint.Style.STROKE
+            }
+            EXPAND -> {
+                p.moveTo(4f, 9f); p.lineTo(4f, 4f); p.lineTo(9f, 4f)
+                p.moveTo(15f, 4f); p.lineTo(20f, 4f); p.lineTo(20f, 9f)
+                p.moveTo(20f, 15f); p.lineTo(20f, 20f); p.lineTo(15f, 20f)
+                p.moveTo(9f, 20f); p.lineTo(4f, 20f); p.lineTo(4f, 15f)
+            }
+            ROTATE -> {
+                canvas.drawRoundRect(RectF(3f, 6f, 21f, 18f), 2.5f, 2.5f, paint)
+                p.moveTo(18f, 10f); p.lineTo(18f, 14f)
+            }
+            PIP -> {
+                canvas.drawRoundRect(RectF(3f, 5f, 21f, 19f), 2f, 2f, paint)
+                paint.style = Paint.Style.FILL
+                canvas.drawRoundRect(RectF(12f, 11f, 19f, 17f), 1f, 1f, paint)
+                paint.style = Paint.Style.STROKE
+            }
             else -> {
             }
         }
@@ -159,6 +219,56 @@ class IconDrawable(private val kind: Int, initial: Int) : Drawable() {
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 }
 
+// ---------------- تأثير Shimmer أثناء تحميل الصور ----------------
+
+class ShimmerView(ctx: Context) : View(ctx) {
+    private val paint = Paint()
+    private val shMatrix = Matrix()
+    private var shader: LinearGradient? = null
+    private var phase = -1f
+
+    private val anim = ValueAnimator.ofFloat(-1f, 1f).apply {
+        duration = 1300
+        repeatCount = ValueAnimator.INFINITE
+        interpolator = LinearInterpolator()
+        addUpdateListener {
+            phase = it.animatedValue as Float
+            invalidate()
+        }
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
+        super.onSizeChanged(w, h, ow, oh)
+        shader = LinearGradient(
+            0f, 0f, w.toFloat(), 0f,
+            intArrayOf(
+                Color.parseColor("#1F1F1F"),
+                Color.parseColor("#363636"),
+                Color.parseColor("#1F1F1F")
+            ),
+            floatArrayOf(0f, 0.5f, 1f),
+            Shader.TileMode.CLAMP
+        )
+        paint.shader = shader
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        anim.start()
+    }
+
+    override fun onDetachedFromWindow() {
+        anim.cancel()
+        super.onDetachedFromWindow()
+    }
+
+    override fun onDraw(c: Canvas) {
+        shMatrix.setTranslate(phase * width, 0f)
+        shader?.setLocalMatrix(shMatrix)
+        c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
+    }
+}
+
 class MainActivity : Activity() {
 
     private val bg = Color.parseColor("#0F0F0F")
@@ -173,6 +283,7 @@ class MainActivity : Activity() {
     private lateinit var prefs: android.content.SharedPreferences
     private lateinit var listView: ListView
     private lateinit var adapter: VideoAdapter
+    private lateinit var continueHeader: LinearLayout
     private lateinit var logo: LinearLayout
     private lateinit var searchBox: EditText
     private var hasBanner = false
@@ -257,6 +368,15 @@ class MainActivity : Activity() {
         }
     }
 
+    // ---------------- الاهتزاز الخفيف ----------------
+
+    private fun buzz(v: View) {
+        try {
+            v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+        } catch (e: Exception) {
+        }
+    }
+
     // Player
     private lateinit var rootFrame: FrameLayout
     private lateinit var playerRoot: FrameLayout
@@ -264,9 +384,15 @@ class MainActivity : Activity() {
     private lateinit var controls: LinearLayout
     private lateinit var topBar: LinearLayout
     private lateinit var playerTitle: TextView
-    private lateinit var playPause: TextView
+    private lateinit var playPause: ImageView
     private lateinit var seekBar: SeekBar
     private lateinit var timeText: TextView
+    private lateinit var speedBtn: TextView
+    private lateinit var unlockBtn: ImageView
+    private lateinit var hudText: TextView
+    private lateinit var gestures: GestureDetector
+    private val pauseDrawable = IconDrawable(IconDrawable.PAUSE, Color.WHITE)
+    private val playDrawable = IconDrawable(IconDrawable.PLAY_FILLED, Color.WHITE)
     private var mp: MediaPlayer? = null
     private var prepared = false
     private var current: VideoItem? = null
@@ -276,6 +402,16 @@ class MainActivity : Activity() {
     private var isLandscape = false
     private var fillMode = false
     private var userSeeking = false
+
+    // القفل + السرعة + إيماءات السطوع والصوت
+    private var locked = false
+    private val speeds = floatArrayOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
+    private var speedIdx = 2
+    private var gestureMode = 0 // 0 لا شيء، 1 سطوع، 2 صوت
+    private var gestureValue = 0f
+    private val audio by lazy { getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+    private val hideHud = Runnable { hudText.visibility = View.GONE }
+    private val hideUnlock = Runnable { if (locked) unlockBtn.visibility = View.GONE }
 
     private val ticker = object : Runnable {
         override fun run() {
@@ -320,10 +456,17 @@ class MainActivity : Activity() {
         listView = ListView(this)
         listView.divider = null
         listView.setBackgroundColor(bg)
+
+        // صف "أكمل المشاهدة" كرأس للقائمة (يجب إضافته قبل setAdapter)
+        continueHeader = LinearLayout(this)
+        continueHeader.orientation = LinearLayout.VERTICAL
+        listView.addHeaderView(continueHeader, null, false)
+
         adapter = VideoAdapter()
         listView.adapter = adapter
         listView.setOnItemClickListener { _, _, pos, _ ->
-            if (pos in 0 until shown.size) openPlayer(shown[pos])
+            val idx = pos - listView.headerViewsCount
+            if (idx in 0 until shown.size) openPlayer(shown[idx])
         }
 
         val emptyText = TextView(this)
@@ -391,10 +534,54 @@ class MainActivity : Activity() {
         rootFrame.addView(playerRoot, FrameLayout.LayoutParams(-1, -1))
         playerRoot.visibility = View.GONE
 
+        addSplash()
+
         setContentView(rootFrame)
         applyFont(rootFrame)
         ui.post(ticker)
         checkPermissionAndLoad()
+    }
+
+    // ---------------- شاشة البداية (Splash) ----------------
+
+    private fun addSplash() {
+        val splash = LinearLayout(this)
+        splash.orientation = LinearLayout.VERTICAL
+        splash.gravity = Gravity.CENTER
+        splash.setBackgroundColor(bg)
+        splash.isClickable = true
+
+        val sIcon = TextView(this)
+        sIcon.text = "▶"
+        sIcon.setTextColor(Color.WHITE)
+        sIcon.textSize = 30f
+        sIcon.gravity = Gravity.CENTER
+        sIcon.background = GradientDrawable().apply {
+            setColor(red)
+            cornerRadius = dp(16).toFloat()
+        }
+        sIcon.setPadding(dp(22), dp(10), dp(22), dp(10))
+        splash.addView(sIcon, LinearLayout.LayoutParams(-2, -2))
+
+        val sName = TextView(this)
+        sName.text = "OfflineTube"
+        sName.setTextColor(Color.WHITE)
+        sName.textSize = 28f
+        sName.typeface = Typeface.DEFAULT_BOLD
+        sName.gravity = Gravity.CENTER
+        splash.addView(sName, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(14) })
+
+        rootFrame.addView(splash, FrameLayout.LayoutParams(-1, -1))
+
+        sIcon.scaleX = 0.7f
+        sIcon.scaleY = 0.7f
+        sIcon.animate().scaleX(1f).scaleY(1f).setDuration(500)
+            .setInterpolator(DecelerateInterpolator()).start()
+        ui.postDelayed({
+            splash.animate().alpha(0f).setDuration(350).withEndAction {
+                rootFrame.removeView(splash)
+            }.start()
+        }, 900)
     }
 
     // ---------------- 3D helpers ----------------
@@ -432,7 +619,7 @@ class MainActivity : Activity() {
         v.setPadding(l, t, r, b)
     }
 
-    // يحوّل أي View إلى زر 3D يغوص عند الضغط
+    // يحوّل أي View إلى زر 3D يغوص عند الضغط (مع اهتزاز خفيف)
     private fun make3D(
         v: View,
         top: Int = Color.parseColor("#3A3A3A"),
@@ -448,6 +635,7 @@ class MainActivity : Activity() {
                 MotionEvent.ACTION_DOWN -> {
                     setBgKeepPad(view, down)
                     view.animate().scaleX(0.96f).scaleY(0.96f).setDuration(80).start()
+                    buzz(view)
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     setBgKeepPad(view, normal)
@@ -456,6 +644,26 @@ class MainActivity : Activity() {
             }
             false // يبقى الضغط (click) يعمل
         }
+    }
+
+    // زر أيقونة 3D جاهز
+    private fun iconBtn(
+        kind: Int,
+        top: Int = Color.parseColor("#3A3A3A"),
+        bottom: Int = Color.parseColor("#1C1C1C"),
+        onClick: () -> Unit
+    ): ImageView {
+        val b = ImageView(this)
+        b.scaleType = ImageView.ScaleType.FIT_CENTER
+        b.setImageDrawable(IconDrawable(kind, Color.WHITE))
+        b.setPadding(dp(11), dp(9), dp(11), dp(13))
+        b.setOnClickListener { onClick() }
+        make3D(b, top, bottom, 24)
+        return b
+    }
+
+    private fun btnLp() = LinearLayout.LayoutParams(dp(46), dp(48)).apply {
+        setMargins(dp(5), dp(2), dp(5), dp(2))
     }
 
     // ---------------- Top block (logo / banner / search) ----------------
@@ -715,6 +923,93 @@ class MainActivity : Activity() {
         shown.clear()
         shown.addAll(list)
         adapter.notifyDataSetChanged()
+        rebuildContinue()
+    }
+
+    // ---------------- صف "أكمل المشاهدة" ----------------
+
+    private fun rebuildContinue() {
+        continueHeader.removeAllViews()
+        if (tab != 0 || query.isNotBlank()) return
+
+        val items = all.filter {
+            prefs.getLong("p_" + it.id, 0L) > 3000L && !prefs.getBoolean("w_" + it.id, false)
+        }.sortedByDescending { prefs.getLong("t_" + it.id, 0L) }.take(10)
+        if (items.isEmpty()) return
+
+        val head = TextView(this)
+        head.text = "أكمل المشاهدة"
+        head.setTextColor(Color.WHITE)
+        head.textSize = 17f
+        head.typeface = Typeface.DEFAULT_BOLD
+        head.setPadding(dp(16), dp(12), dp(16), dp(8))
+        continueHeader.addView(head)
+
+        val sv = HorizontalScrollView(this)
+        sv.isHorizontalScrollBarEnabled = false
+        sv.setPadding(dp(12), 0, dp(12), dp(6))
+        sv.clipToPadding = false
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        for (v in items) {
+            row.addView(miniCard(v), LinearLayout.LayoutParams(-2, -2).apply {
+                marginStart = dp(4)
+                marginEnd = dp(4)
+            })
+        }
+        sv.addView(row)
+        continueHeader.addView(sv)
+        applyFont(continueHeader)
+    }
+
+    private fun miniCard(v: VideoItem): View {
+        val w = dp(170)
+        val h = w * 9 / 16
+
+        val col = LinearLayout(this)
+        col.orientation = LinearLayout.VERTICAL
+
+        val f = FrameLayout(this)
+        f.setBackgroundColor(Color.parseColor("#222222"))
+        f.clipToOutline = true
+        f.outlineProvider = object : ViewOutlineProvider() {
+            override fun getOutline(view: View, o: Outline) {
+                o.setRoundRect(0, 0, view.width, view.height, dp(12).toFloat())
+            }
+        }
+        val iv = ImageView(this)
+        iv.scaleType = ImageView.ScaleType.CENTER_CROP
+        f.addView(iv, FrameLayout.LayoutParams(-1, -1))
+        loadThumb(v, iv, null)
+
+        val pos = prefs.getLong("p_" + v.id, 0L)
+        val dur = if (v.duration > 0) v.duration else prefs.getLong("d_" + v.id, 0L)
+        if (pos > 0 && dur > 0) {
+            val frac = (pos.toFloat() / dur.toFloat()).coerceIn(0f, 1f)
+            val line = LinearLayout(this)
+            line.orientation = LinearLayout.HORIZONTAL
+            line.layoutDirection = View.LAYOUT_DIRECTION_LTR
+            val done = View(this)
+            done.setBackgroundColor(red)
+            val rest = View(this)
+            rest.setBackgroundColor(Color.parseColor("#55FFFFFF"))
+            line.addView(done, LinearLayout.LayoutParams(0, -1, frac))
+            line.addView(rest, LinearLayout.LayoutParams(0, -1, 1f - frac))
+            f.addView(line, FrameLayout.LayoutParams(-1, dp(3), Gravity.BOTTOM))
+        }
+        col.addView(f, LinearLayout.LayoutParams(w, h))
+
+        val t = TextView(this)
+        t.text = v.title
+        t.setTextColor(Color.WHITE)
+        t.textSize = 12f
+        t.maxLines = 2
+        t.ellipsize = android.text.TextUtils.TruncateAt.END
+        t.setPadding(dp(2), dp(6), dp(2), 0)
+        col.addView(t, LinearLayout.LayoutParams(w, -2))
+
+        col.setOnClickListener { openPlayer(v) }
+        return col
     }
 
     // ---------------- Mixing old / middle / new ----------------
@@ -938,7 +1233,8 @@ class MainActivity : Activity() {
             thumbFile(v).delete()
         } catch (e: Exception) {
         }
-        prefs.edit().remove("p_" + v.id).remove("d_" + v.id).remove("w_" + v.id).apply()
+        prefs.edit().remove("p_" + v.id).remove("d_" + v.id).remove("w_" + v.id)
+            .remove("t_" + v.id).apply()
         refresh()
         Toast.makeText(this, "تم حذف الفيديو", Toast.LENGTH_SHORT).show()
     }
@@ -1086,17 +1382,20 @@ class MainActivity : Activity() {
         return box
     }
 
-    // Thumbnail + duration badge (bottom-left) + red progress line
+    // Thumbnail (مع Shimmer أثناء التحميل) + duration badge (bottom-left) + red progress line
     // + "تم المشاهدة" (top-left) / remaining time (top-right)
     private fun thumbFrame(v: VideoItem, w: Int, h: Int): FrameLayout {
         val f = FrameLayout(this)
         f.setBackgroundColor(Color.parseColor("#222222"))
         f.layoutParams = ViewGroup.LayoutParams(w, h)
 
+        val shimmer = ShimmerView(this)
+        f.addView(shimmer, FrameLayout.LayoutParams(-1, -1))
+
         val iv = ImageView(this)
         iv.scaleType = ImageView.ScaleType.CENTER_CROP
         f.addView(iv, FrameLayout.LayoutParams(-1, -1))
-        loadThumb(v, iv)
+        loadThumb(v, iv, shimmer)
 
         val badge = TextView(this)
         badge.text = fmt(v.duration)
@@ -1158,12 +1457,13 @@ class MainActivity : Activity() {
 
     // ---------------- High-quality thumbnails ----------------
 
-    private fun loadThumb(v: VideoItem, iv: ImageView) {
+    private fun loadThumb(v: VideoItem, iv: ImageView, shimmer: View?) {
         iv.tag = v.id
         val cached = cache.get(v.id)
         if (cached != null) {
             iv.alpha = 1f
             iv.setImageBitmap(cached)
+            shimmer?.visibility = View.GONE
             return
         }
         iv.setImageDrawable(null)
@@ -1180,9 +1480,13 @@ class MainActivity : Activity() {
                 ui.post {
                     if (iv.tag == v.id) {
                         iv.setImageBitmap(result)
-                        iv.animate().alpha(1f).setDuration(220).start()
+                        iv.animate().alpha(1f).setDuration(220).withEndAction {
+                            shimmer?.visibility = View.GONE
+                        }.start()
                     }
                 }
+            } else {
+                ui.post { shimmer?.visibility = View.GONE }
             }
         }
     }
@@ -1269,6 +1573,10 @@ class MainActivity : Activity() {
 
     // ---------------- Player ----------------
 
+    private fun setPlayIcon(playing: Boolean) {
+        playPause.setImageDrawable(if (playing) pauseDrawable else playDrawable)
+    }
+
     private fun buildPlayer() {
         playerRoot = FrameLayout(this)
         playerRoot.setBackgroundColor(Color.BLACK)
@@ -1292,10 +1600,50 @@ class MainActivity : Activity() {
         })
         playerRoot.addView(surfaceView, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
 
-        playerRoot.setOnClickListener {
-            val show = controls.visibility != View.VISIBLE
-            controls.visibility = if (show) View.VISIBLE else View.GONE
-            topBar.visibility = if (show) View.VISIBLE else View.GONE
+        // إيماءات المشغّل: نقرة = إظهار/إخفاء، نقرتان = تقديم/إرجاع 10 ثوانٍ،
+        // سحب عمودي يسار = السطوع، يمين = الصوت
+        gestures = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent): Boolean {
+                gestureMode = 0
+                return true
+            }
+
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                onPlayerTap()
+                return true
+            }
+
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                if (locked || !prepared) return true
+                val left = e.x < playerRoot.width / 2f
+                seekBy(if (left) -10000 else 10000)
+                showHud(if (left) "-10s" else "+10s")
+                playerRoot.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                return true
+            }
+
+            override fun onScroll(e1: MotionEvent?, e2: MotionEvent, dx: Float, dy: Float): Boolean {
+                if (locked || e1 == null || playerRoot.height <= 0) return false
+                if (gestureMode == 0) {
+                    if (Math.abs(dy) < Math.abs(dx)) return false
+                    gestureMode = if (e1.x < playerRoot.width / 2f) 1 else 2
+                    gestureValue = if (gestureMode == 1) currentBrightness() else currentVolume()
+                }
+                val delta = dy / playerRoot.height.toFloat() * 1.2f
+                gestureValue = (gestureValue + delta).coerceIn(0f, 1f)
+                if (gestureMode == 1) {
+                    setBrightness(gestureValue)
+                    showHud("السطوع " + (gestureValue * 100).toInt() + "%")
+                } else {
+                    setVolume(gestureValue)
+                    showHud("الصوت " + (gestureValue * 100).toInt() + "%")
+                }
+                return true
+            }
+        })
+        playerRoot.setOnTouchListener { _, e ->
+            gestures.onTouchEvent(e)
+            true
         }
         playerRoot.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> fitVideo() }
 
@@ -1321,32 +1669,15 @@ class MainActivity : Activity() {
         topBar.addView(playerTitle, LinearLayout.LayoutParams(0, -2, 1f))
         playerRoot.addView(topBar, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
 
-        // bottom controls
+        // bottom controls: صف التقدّم ثم صف الأزرار
         controls = LinearLayout(this)
-        controls.orientation = LinearLayout.HORIZONTAL
-        controls.gravity = Gravity.CENTER_VERTICAL
+        controls.orientation = LinearLayout.VERTICAL
         controls.setBackgroundColor(Color.parseColor("#88000000"))
         controls.setPadding(dp(8), dp(4), dp(8), dp(4))
 
-        playPause = TextView(this)
-        playPause.text = "⏸"
-        playPause.setTextColor(Color.WHITE)
-        playPause.textSize = 22f
-        playPause.gravity = Gravity.CENTER
-        playPause.setPadding(dp(14), dp(6), dp(14), dp(10))
-        playPause.setOnClickListener {
-            val p = mp ?: return@setOnClickListener
-            if (!prepared) return@setOnClickListener
-            if (p.isPlaying) {
-                p.pause(); playPause.text = "▶"
-            } else {
-                p.start(); playPause.text = "⏸"
-            }
-        }
-        make3D(playPause, Color.parseColor("#FF3D3D"), Color.parseColor("#B71C1C"), 24)
-        controls.addView(playPause, LinearLayout.LayoutParams(-2, -2).apply {
-            setMargins(dp(4), dp(2), dp(4), dp(2))
-        })
+        val seekRow = LinearLayout(this)
+        seekRow.orientation = LinearLayout.HORIZONTAL
+        seekRow.gravity = Gravity.CENTER_VERTICAL
 
         seekBar = SeekBar(this)
         seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -1360,45 +1691,269 @@ class MainActivity : Activity() {
                 if (prepared) mp?.seekTo(seekBar.progress)
             }
         })
-        controls.addView(seekBar, LinearLayout.LayoutParams(0, -2, 1f))
+        seekRow.addView(seekBar, LinearLayout.LayoutParams(0, -2, 1f))
 
         timeText = TextView(this)
         timeText.setTextColor(Color.WHITE)
         timeText.textSize = 12f
         timeText.text = "0:00 / 0:00"
         timeText.setPadding(dp(6), 0, dp(6), 0)
-        controls.addView(timeText)
+        seekRow.addView(timeText)
+        controls.addView(seekRow, LinearLayout.LayoutParams(-1, -2))
 
-        // زر ملء الشاشة بالكامل (قص الأطراف) / احتواء
-        val fill = TextView(this)
-        fill.text = "⤢"
-        fill.setTextColor(Color.WHITE)
-        fill.textSize = 22f
-        fill.gravity = Gravity.CENTER
-        fill.setPadding(dp(12), dp(6), dp(12), dp(10))
-        fill.setOnClickListener {
+        val btnRow = LinearLayout(this)
+        btnRow.orientation = LinearLayout.HORIZONTAL
+        btnRow.gravity = Gravity.CENTER
+
+        // تشغيل / إيقاف
+        playPause = iconBtn(
+            IconDrawable.PAUSE, Color.parseColor("#FF3D3D"), Color.parseColor("#B71C1C")
+        ) {
+            val p = mp
+            if (p != null && prepared) {
+                if (p.isPlaying) {
+                    p.pause(); setPlayIcon(false)
+                } else {
+                    p.start(); setPlayIcon(true)
+                }
+            }
+        }
+        btnRow.addView(playPause, LinearLayout.LayoutParams(dp(56), dp(58)).apply {
+            setMargins(dp(5), dp(2), dp(5), dp(2))
+        })
+
+        // سرعة التشغيل
+        speedBtn = TextView(this)
+        speedBtn.text = "1x"
+        speedBtn.setTextColor(Color.WHITE)
+        speedBtn.textSize = 14f
+        speedBtn.typeface = Typeface.DEFAULT_BOLD
+        speedBtn.gravity = Gravity.CENTER
+        speedBtn.setPadding(dp(4), dp(6), dp(4), dp(10))
+        speedBtn.setOnClickListener {
+            speedIdx = (speedIdx + 1) % speeds.size
+            applySpeed()
+            showHud("السرعة " + fmtSpeed(speeds[speedIdx]))
+        }
+        make3D(speedBtn, Color.parseColor("#3A3A3A"), Color.parseColor("#1C1C1C"), 24)
+        btnRow.addView(speedBtn, LinearLayout.LayoutParams(dp(54), dp(48)).apply {
+            setMargins(dp(5), dp(2), dp(5), dp(2))
+        })
+
+        // قفل الشاشة
+        btnRow.addView(iconBtn(IconDrawable.LOCK) { setLocked(true) }, btnLp())
+
+        // صورة داخل صورة (PiP)
+        if (Build.VERSION.SDK_INT >= 26 &&
+            packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+        ) {
+            btnRow.addView(iconBtn(IconDrawable.PIP) { enterPip() }, btnLp())
+        }
+
+        // ملء الشاشة بالكامل (قص الأطراف) / احتواء
+        btnRow.addView(iconBtn(IconDrawable.EXPAND) {
             fillMode = !fillMode
             fitVideo()
-        }
-        make3D(fill, radius = 24)
-        controls.addView(fill, LinearLayout.LayoutParams(-2, -2).apply {
-            setMargins(dp(4), dp(2), dp(4), dp(2))
-        })
+        }, btnLp())
 
-        // زر تدوير الشاشة
-        val fs = TextView(this)
-        fs.text = "⛶"
-        fs.setTextColor(Color.WHITE)
-        fs.textSize = 22f
-        fs.gravity = Gravity.CENTER
-        fs.setPadding(dp(12), dp(6), dp(12), dp(10))
-        fs.setOnClickListener { toggleFullscreen() }
-        make3D(fs, radius = 24)
-        controls.addView(fs, LinearLayout.LayoutParams(-2, -2).apply {
-            setMargins(dp(4), dp(2), dp(4), dp(2))
-        })
+        // تدوير الشاشة
+        btnRow.addView(iconBtn(IconDrawable.ROTATE) { toggleFullscreen() }, btnLp())
 
+        controls.addView(btnRow, LinearLayout.LayoutParams(-1, -2))
         playerRoot.addView(controls, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+
+        // زر فك القفل (يظهر عند اللمس أثناء القفل)
+        unlockBtn = iconBtn(
+            IconDrawable.UNLOCK, Color.parseColor("#FF3D3D"), Color.parseColor("#B71C1C")
+        ) { setLocked(false) }
+        unlockBtn.visibility = View.GONE
+        playerRoot.addView(
+            unlockBtn,
+            FrameLayout.LayoutParams(dp(54), dp(56), Gravity.LEFT or Gravity.CENTER_VERTICAL).apply {
+                leftMargin = dp(24)
+            }
+        )
+
+        // مؤشر السطوع / الصوت / التقديم
+        hudText = TextView(this)
+        hudText.setTextColor(Color.WHITE)
+        hudText.textSize = 18f
+        hudText.typeface = Typeface.DEFAULT_BOLD
+        hudText.gravity = Gravity.CENTER
+        hudText.setPadding(dp(20), dp(10), dp(20), dp(10))
+        hudText.background = GradientDrawable().apply {
+            setColor(Color.parseColor("#B0000000"))
+            cornerRadius = dp(14).toFloat()
+        }
+        hudText.visibility = View.GONE
+        playerRoot.addView(hudText, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+
+        setPlayIcon(true)
+    }
+
+    // ---------------- أدوات المشغّل ----------------
+
+    private fun onPlayerTap() {
+        if (locked) {
+            showUnlockBtn()
+            return
+        }
+        val show = controls.visibility != View.VISIBLE
+        controls.visibility = if (show) View.VISIBLE else View.GONE
+        topBar.visibility = if (show) View.VISIBLE else View.GONE
+    }
+
+    private fun showHud(text: String) {
+        hudText.text = text
+        hudText.visibility = View.VISIBLE
+        ui.removeCallbacks(hideHud)
+        ui.postDelayed(hideHud, 700)
+    }
+
+    private fun showUnlockBtn() {
+        unlockBtn.visibility = View.VISIBLE
+        ui.removeCallbacks(hideUnlock)
+        ui.postDelayed(hideUnlock, 2500)
+    }
+
+    private fun setLocked(l: Boolean) {
+        locked = l
+        buzz(playerRoot)
+        if (l) {
+            controls.visibility = View.GONE
+            topBar.visibility = View.GONE
+            showUnlockBtn()
+            showHud("تم قفل الشاشة")
+        } else {
+            ui.removeCallbacks(hideUnlock)
+            unlockBtn.visibility = View.GONE
+            controls.visibility = View.VISIBLE
+            topBar.visibility = View.VISIBLE
+        }
+    }
+
+    private fun seekBy(delta: Int) {
+        val p = mp ?: return
+        if (!prepared) return
+        try {
+            val t = (p.currentPosition + delta).coerceIn(0, p.duration)
+            if (Build.VERSION.SDK_INT >= 26) {
+                p.seekTo(t.toLong(), MediaPlayer.SEEK_CLOSEST)
+            } else {
+                p.seekTo(t)
+            }
+            seekBar.progress = t
+        } catch (e: Exception) {
+        }
+    }
+
+    private fun currentBrightness(): Float {
+        val b = window.attributes.screenBrightness
+        if (b >= 0f) return b
+        return try {
+            Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS) / 255f
+        } catch (e: Exception) {
+            0.5f
+        }
+    }
+
+    private fun setBrightness(f: Float) {
+        val lp = window.attributes
+        lp.screenBrightness = f.coerceAtLeast(0.02f)
+        window.attributes = lp
+    }
+
+    private fun currentVolume(): Float {
+        val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        return if (max > 0) audio.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / max else 0f
+    }
+
+    private fun setVolume(f: Float) {
+        try {
+            val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+            audio.setStreamVolume(AudioManager.STREAM_MUSIC, Math.round(f * max), 0)
+        } catch (e: Exception) {
+        }
+    }
+
+    private fun fmtSpeed(s: Float): String {
+        return (if (s % 1f == 0f) s.toInt().toString() else s.toString()) + "x"
+    }
+
+    private fun applySpeed() {
+        val s = speeds[speedIdx]
+        speedBtn.text = fmtSpeed(s)
+        val p = mp ?: return
+        if (!prepared || Build.VERSION.SDK_INT < 23) return
+        try {
+            val was = p.isPlaying
+            p.playbackParams = p.playbackParams.setSpeed(s)
+            if (!was) p.pause()
+        } catch (e: Exception) {
+        }
+    }
+
+    // ---------------- صورة داخل صورة (PiP) ----------------
+
+    private fun enterPip() {
+        if (Build.VERSION.SDK_INT < 26) return
+        try {
+            var w = videoW
+            var h = videoH
+            if (w <= 0 || h <= 0) {
+                w = 16
+                h = 9
+            }
+            val ratio = w.toFloat() / h
+            val r = when {
+                ratio > 2.3f -> Rational(23, 10)
+                ratio < 0.45f -> Rational(45, 100)
+                else -> Rational(w, h)
+            }
+            enterPictureInPictureMode(PictureInPictureParams.Builder().setAspectRatio(r).build())
+        } catch (e: Exception) {
+            Toast.makeText(this, "الوضع المصغّر غير متاح", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (Build.VERSION.SDK_INT >= 26 && playerRoot.visibility == View.VISIBLE &&
+            prepared && mp?.isPlaying == true
+        ) {
+            enterPip()
+        }
+    }
+
+    @Suppress("DEPRECATION", "NewApi")
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: Configuration
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        if (playerRoot.visibility != View.VISIBLE) return
+        if (isInPictureInPictureMode) {
+            controls.visibility = View.GONE
+            topBar.visibility = View.GONE
+            unlockBtn.visibility = View.GONE
+            hudText.visibility = View.GONE
+        } else if (!locked) {
+            controls.visibility = View.VISIBLE
+            topBar.visibility = View.VISIBLE
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // إغلاق نافذة PiP يوقف التشغيل
+        if (Build.VERSION.SDK_INT >= 24 && isInPictureInPictureMode) {
+            try {
+                val p = mp
+                if (p != null && prepared && p.isPlaying) p.pause()
+            } catch (e: Exception) {
+            }
+            setPlayIcon(false)
+        }
     }
 
     private fun openPlayer(v: VideoItem) {
@@ -1407,8 +1962,13 @@ class MainActivity : Activity() {
         videoW = 0
         videoH = 0
         fillMode = false
+        locked = false
+        speedIdx = 2
+        speedBtn.text = "1x"
+        unlockBtn.visibility = View.GONE
+        hudText.visibility = View.GONE
         playerTitle.text = v.title
-        playPause.text = "⏸"
+        setPlayIcon(true)
         seekBar.progress = 0
         controls.visibility = View.VISIBLE
         topBar.visibility = View.VISIBLE
@@ -1454,20 +2014,21 @@ class MainActivity : Activity() {
                 val saved = prefs.getLong("p_" + v.id, 0L)
                 if (saved > 0 && saved < m.duration - 3000) m.seekTo(saved.toInt())
                 m.start()
-                playPause.text = "⏸"
+                setPlayIcon(true)
+                if (speedIdx != 2) applySpeed()
             }
             p.setOnCompletionListener {
                 savePos(v, 0L, it.duration.toLong())
                 prefs.edit().putBoolean("w_" + v.id, true).apply()
-                playPause.text = "▶"
+                setPlayIcon(false)
             }
             p.setOnErrorListener { _, _, _ ->
-                playPause.text = "▶"
+                setPlayIcon(false)
                 true
             }
             p.prepareAsync()
         } catch (e: Exception) {
-            playPause.text = "▶"
+            setPlayIcon(false)
         }
     }
 
@@ -1523,6 +2084,16 @@ class MainActivity : Activity() {
         videoW = 0
         videoH = 0
         fillMode = false
+        locked = false
+        speedIdx = 2
+        ui.removeCallbacks(hideHud)
+        ui.removeCallbacks(hideUnlock)
+        hudText.visibility = View.GONE
+        unlockBtn.visibility = View.GONE
+        // إرجاع السطوع لإعداد النظام
+        val lp = window.attributes
+        lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+        window.attributes = lp
         playerRoot.visibility = View.GONE
         isLandscape = false
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
@@ -1548,6 +2119,7 @@ class MainActivity : Activity() {
             e.putBoolean("w_" + v.id, true)
         } else if (pos > 3000) {
             e.putBoolean("w_" + v.id, false)
+            e.putLong("t_" + v.id, System.currentTimeMillis())
         }
         e.apply()
     }
@@ -1561,11 +2133,17 @@ class MainActivity : Activity() {
     }
 
     override fun onBackPressed() {
-        if (playerRoot.visibility == View.VISIBLE) closePlayer() else super.onBackPressed()
+        if (playerRoot.visibility == View.VISIBLE) {
+            if (locked) showUnlockBtn() else closePlayer()
+        } else {
+            super.onBackPressed()
+        }
     }
 
     override fun onDestroy() {
         ui.removeCallbacks(ticker)
+        ui.removeCallbacks(hideHud)
+        ui.removeCallbacks(hideUnlock)
         releasePlayer()
         pool.shutdown()
         super.onDestroy()
