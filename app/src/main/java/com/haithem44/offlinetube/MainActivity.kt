@@ -810,20 +810,20 @@ class MainActivity : Activity() {
         val w = screenW() - dp(24)
         val th = w * 9 / 16
 
-        // الحاوية الخارجية (هوامش لتظهر الظلال)
+        // الحاوية الخارجية (فاصل مضغوط بين البطاقات = 8dp)
         val box = LinearLayout(this)
         box.orientation = LinearLayout.VERTICAL
-        box.setPadding(dp(12), dp(8), dp(12), dp(14))
+        box.setPadding(dp(12), dp(4), dp(12), dp(4))
 
         // البطاقة البارزة
         val card = LinearLayout(this)
         card.orientation = LinearLayout.VERTICAL
-        card.setPadding(0, 0, 0, dp(14))
+        card.setPadding(0, 0, 0, dp(10))
         setBgKeepPad(
             card,
             raised(Color.parseColor("#2B2B2B"), Color.parseColor("#181818"), 18)
         )
-        card.elevation = dp(6).toFloat()
+        card.elevation = dp(3).toFloat()
         card.clipToOutline = true
         card.outlineProvider = object : ViewOutlineProvider() {
             override fun getOutline(view: View, o: Outline) {
