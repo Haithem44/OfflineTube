@@ -335,7 +335,6 @@ class MainActivity : AppCompatActivity() {
         query = savedInstanceState?.getString("query") ?: ""
         pendingOpenId = savedInstanceState?.let { if (it.getBoolean("player_open")) it.getLong("current_id", -1L) else -1L } ?: -1L
 
-        // ✅ إصلاح زر الرجوع (يجب أن يكون هنا)
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (playerRoot.visibility == View.VISIBLE) {
