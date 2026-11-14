@@ -191,6 +191,7 @@ class MainActivity : AppCompatActivity() {
     private var refreshing = false
     private var touchStartY = 0f
     private var pulling = false
+    private var firstResume = true
 
     private var folderPath: String = ""
     private var pendingDelete: VideoItem? = null
@@ -758,7 +759,15 @@ class MainActivity : AppCompatActivity() {
         try { contentResolver.registerContentObserver(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true, mediaObserver) } catch (_: Exception) {}
     }
 
-    private fun startLoad() { if (folderPath.isEmpty()) pickFolder() else loadVideos() }
+    // تحديث القائمة عند كل فتح للتطبيق (مع إظهار شريط "جارٍ التحديث")
+    private fun startLoad() { if (folderPath.isEmpty()) pickFolder() else reloadVideos() }
+
+    // تحديث القائمة عند الرجوع للتطبيق من الخلفية
+    override fun onResume() {
+        super.onResume()
+        if (firstResume) { firstResume = false; return }
+        if (playerRoot.visibility != View.VISIBLE && folderPath.isNotEmpty()) reloadVideos()
+    }
 
     private fun loadVideos() {
         val folder = folderPath; if (folder.isEmpty()) { finishRefresh(); return }
@@ -849,15 +858,14 @@ class MainActivity : AppCompatActivity() {
     private fun screenW() = resources.displayMetrics.widthPixels
 
     private fun videoItemView(v: VideoItem): View {
-        val w = screenW() - dp(24); val th = w * 9 / 16
+        // الصورة بعرض الشاشة كاملاً بدون حواف جانبية (مثل يوتيوب)
+        val w = screenW(); val th = w * 9 / 16
         val box = LinearLayout(this); box.orientation = LinearLayout.VERTICAL
 
-        box.setPadding(dp(12), dp(2), dp(12), dp(2))
+        box.setPadding(0, 0, 0, dp(10))
 
-        val card = LinearLayout(this); card.orientation = LinearLayout.VERTICAL; card.setPadding(0, 0, 0, dp(6))
-        setBgKeepPad(card, raised(Color.parseColor("#2B2B2B"), Color.parseColor("#181818"), 18))
-        card.elevation = dp(3).toFloat(); card.clipToOutline = true
-        card.outlineProvider = object : ViewOutlineProvider() { override fun getOutline(view: View, o: Outline) { o.setRoundRect(0, 0, view.width, view.height, dp(18).toFloat()) } }
+        val card = LinearLayout(this); card.orientation = LinearLayout.VERTICAL
+        card.setBackgroundColor(bg)
         box.addView(card, LinearLayout.LayoutParams(-1, -2))
 
         card.addView(thumbFrame(v, w, th), LinearLayout.LayoutParams(w, th))
