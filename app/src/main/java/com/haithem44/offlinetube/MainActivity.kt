@@ -1,4 +1,5 @@
-@androidx.media3.common.util.UnstableApi
+@file:androidx.media3.common.util.UnstableApi
+
 package com.haithem44.offlinetube
 
 import android.Manifest
@@ -826,7 +827,6 @@ class MainActivity : AppCompatActivity() {
         val w = screenW() - dp(24); val th = w * 9 / 16
         val box = LinearLayout(this); box.orientation = LinearLayout.VERTICAL; box.setPadding(dp(12), dp(4), dp(12), dp(4))
         
-        // تصغير البطاقة (البار)
         val card = LinearLayout(this); card.orientation = LinearLayout.VERTICAL; card.setPadding(0, 0, 0, dp(8))
         setBgKeepPad(card, raised(Color.parseColor("#2B2B2B"), Color.parseColor("#181818"), 18))
         card.elevation = dp(3).toFloat(); card.clipToOutline = true
@@ -848,9 +848,8 @@ class MainActivity : AppCompatActivity() {
         val title = TextView(this); title.text = v.title; title.setTextColor(Color.WHITE); title.textSize = 14f; title.maxLines = 2; title.ellipsize = android.text.TextUtils.TruncateAt.END
         col.addView(title)
         
-        val pos = prefs.position(v.id); val dur = if (v.duration > 0) v.duration else prefs.duration(v.id)
-        val pct = if (pos > 0 && dur > 0) ((pos * 100) / dur).toInt().coerceIn(0, 100) else 0
-        val sub = TextView(this); sub.text = if (pct > 0) fmt(v.duration) + "  •  شوهد " + pct + "%" else fmt(v.duration)
+        // إزالة الأرقام من النص السفلي
+        val sub = TextView(this); sub.text = "فيديو" 
         sub.setTextColor(gray); sub.textSize = 11f; sub.setPadding(0, dp(2), 0, 0); col.addView(sub)
         row.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
 
@@ -878,7 +877,7 @@ class MainActivity : AppCompatActivity() {
         val shimmer = ShimmerView(this); f.addView(shimmer, FrameLayout.LayoutParams(-1, -1))
         val iv = ImageView(this); iv.scaleType = ImageView.ScaleType.CENTER_CROP; f.addView(iv, FrameLayout.LayoutParams(-1, -1)); loadThumb(v, iv, shimmer)
         
-        // إعادة المدة الزمنية (الأرقام) على الصورة
+        // المدة الزمنية (الأرقام) على الصورة
         val badge = TextView(this)
         badge.text = fmt(v.duration)
         badge.setTextColor(Color.WHITE)
