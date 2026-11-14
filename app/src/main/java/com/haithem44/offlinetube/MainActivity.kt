@@ -941,7 +941,6 @@ class MainActivity : AppCompatActivity() {
         })
         playerRoot.addView(surfaceView, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
 
-        // ✅ إصلاح: إضافة طبقة شفافة لاستقبال الإيماءات (حتى لا تسرق النقرات من الأزرار)
         gestures = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e: MotionEvent): Boolean { gestureMode = 0; return true }
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean { onPlayerTap(); return true }
@@ -959,6 +958,7 @@ class MainActivity : AppCompatActivity() {
             }
         })
         
+        // إضافة طبقة شفافة لاستقبال الإيماءات (حتى لا تسرق النقرات من الأزرار)
         val gestureOverlay = View(this)
         gestureOverlay.setOnTouchListener { _, e -> gestures.onTouchEvent(e); true }
         playerRoot.addView(gestureOverlay, FrameLayout.LayoutParams(-1, -1))
@@ -1108,11 +1108,28 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startPlayback(v: VideoItem) {
-        releasePlayer(); val p = MediaPlayer(); mp = p; prepared = false
+        releasePlayer()
+        
+        // فحص إمكانية قراءة الملف لتجنب انهيار التطبيق
+        var canRead = false
+        try {
+            contentResolver.openFileDescriptor(v.uri, "r")?.use { pfd ->
+                canRead = pfd.fileDescriptor.valid()
+            }
+        } catch (_: Exception) { canRead = false }
+
+        if (!canRead) {
+            Toast.makeText(this@MainActivity, "لا يمكن قراءة هذا الفيديو، قد يكون محذوفاً أو تم سحب الصلاحية منه", Toast.LENGTH_LONG).show()
+            setPlayIcon(false)
+            return
+        }
+
+        val p = MediaPlayer(); mp = p; prepared = false
         try {
             p.setAudioAttributes(AudioAttributes.Builder().setContentType(AudioAttributes.CONTENT_TYPE_MOVIE).setUsage(AudioAttributes.USAGE_MEDIA).build())
             try { p.setWakeMode(this@MainActivity.applicationContext, PowerManager.PARTIAL_WAKE_LOCK) } catch (_: Exception) {}
-            p.setDataSource(this, v.uri); 
+            p.setDataSource(this, v.uri)
+            
             if (surfaceView.holder.surface.isValid) p.setDisplay(surfaceView.holder)
             
             p.setOnVideoSizeChangedListener { _, w, h ->
