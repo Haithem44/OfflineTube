@@ -1374,3 +1374,4 @@ class MainActivity : AppCompatActivity() {
         fun resetProgress(id: Long) = sp.edit().remove("p_$id").remove("w_$id").apply()
         fun clearVideo(id: Long) = sp.edit().remove("p_$id").remove("d_$id").remove("w_$id").remove("t_$id").apply()
     }
+}
