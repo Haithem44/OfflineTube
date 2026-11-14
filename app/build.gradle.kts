@@ -31,13 +31,12 @@ android {
 }
 
 dependencies {
-    // المكتبات الأساسية
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.activity:activity-ktx:1.9.0")
     implementation("com.google.android.material:material:1.12.0")
     
-    // مكتبات ExoPlayer (المشغل الجديد)
+    // مكتبة ExoPlayer لتشغيل الفيديوهات
     implementation("androidx.media3:media3-exoplayer:1.3.0")
     implementation("androidx.media3:media3-ui:1.3.0")
 }
