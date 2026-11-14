@@ -1,3 +1,4 @@
+@androidx.media3.common.util.UnstableApi
 package com.haithem44.offlinetube
 
 import android.Manifest
@@ -29,17 +30,14 @@ import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
-import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.MediaMetadataRetriever
-import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
-import android.os.PowerManager
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.provider.Settings
@@ -77,6 +75,10 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
+import androidx.media3.exoplayer.ExoPlayer
 import java.io.File
 import java.io.FileOutputStream
 import java.util.Locale
@@ -259,7 +261,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var gestures: GestureDetector
     private val pauseDrawable = IconDrawable(IconDrawable.PAUSE, Color.WHITE)
     private val playDrawable = IconDrawable(IconDrawable.PLAY_FILLED, Color.WHITE)
-    private var mp: MediaPlayer? = null
+    
+    // ExoPlayer
+    private var player: ExoPlayer? = null
     private var prepared = false
     private var current: VideoItem? = null
     private var pending: VideoItem? = null
@@ -280,15 +284,22 @@ class MainActivity : AppCompatActivity() {
 
     private val ticker = object : Runnable {
         override fun run() {
-            val p = mp
+            val p = player
             if (p != null && prepared) {
                 try {
                     val pos = p.currentPosition
-                    if (!userSeeking) { seekBar.max = p.duration; seekBar.progress = pos }
-                    timeText.text = fmt(pos.toLong()) + " / " + fmt(p.duration.toLong())
+                    val dur = p.duration
+                    if (!userSeeking && dur > 0) { 
+                        seekBar.max = dur.toInt()
+                        seekBar.progress = pos.toInt() 
+                    }
+                    if (dur > 0) {
+                        timeText.text = fmt(pos) + " / " + fmt(dur)
+                    }
+                    
                     val now = System.currentTimeMillis()
                     if (now - lastSaveTime > 5000) {
-                        current?.let { prefs.savePosition(it.id, pos.toLong(), p.duration.toLong()) }
+                        current?.let { prefs.savePosition(it.id, pos, dur) }
                         lastSaveTime = now
                     }
                 } catch (_: Exception) {}
@@ -435,8 +446,8 @@ class MainActivity : AppCompatActivity() {
         outState.putBoolean("player_open", playerRoot.visibility == View.VISIBLE)
         current?.let { c ->
             outState.putLong("current_id", c.id)
-            val p = mp
-            if (p != null && prepared) { try { prefs.savePosition(c.id, p.currentPosition.toLong(), p.duration.toLong()) } catch (_: Exception) {} }
+            val p = player
+            if (p != null && prepared) { try { prefs.savePosition(c.id, p.currentPosition, p.duration) } catch (_: Exception) {} }
         }
     }
 
@@ -814,43 +825,48 @@ class MainActivity : AppCompatActivity() {
     private fun videoItemView(v: VideoItem): View {
         val w = screenW() - dp(24); val th = w * 9 / 16
         val box = LinearLayout(this); box.orientation = LinearLayout.VERTICAL; box.setPadding(dp(12), dp(4), dp(12), dp(4))
-        val card = LinearLayout(this); card.orientation = LinearLayout.VERTICAL; card.setPadding(0, 0, 0, dp(10))
+        
+        // تصغير البطاقة (البار)
+        val card = LinearLayout(this); card.orientation = LinearLayout.VERTICAL; card.setPadding(0, 0, 0, dp(8))
         setBgKeepPad(card, raised(Color.parseColor("#2B2B2B"), Color.parseColor("#181818"), 18))
         card.elevation = dp(3).toFloat(); card.clipToOutline = true
         card.outlineProvider = object : ViewOutlineProvider() { override fun getOutline(view: View, o: Outline) { o.setRoundRect(0, 0, view.width, view.height, dp(18).toFloat()) } }
         box.addView(card, LinearLayout.LayoutParams(-1, -2))
+        
         card.addView(thumbFrame(v, w, th), LinearLayout.LayoutParams(w, th))
 
-        val row = LinearLayout(this); row.orientation = LinearLayout.HORIZONTAL; row.gravity = Gravity.TOP; row.setPadding(dp(12), dp(12), dp(6), 0)
+        val row = LinearLayout(this); row.orientation = LinearLayout.HORIZONTAL; row.gravity = Gravity.CENTER_VERTICAL; row.setPadding(dp(10), dp(8), dp(6), 0)
+        
         val avatar = TextView(this)
         val letter = v.title.trim().firstOrNull()?.toString()?.uppercase() ?: "V"
-        avatar.text = letter; avatar.setTextColor(Color.WHITE); avatar.textSize = 18f; avatar.typeface = Typeface.DEFAULT_BOLD; avatar.gravity = Gravity.CENTER
+        avatar.text = letter; avatar.setTextColor(Color.WHITE); avatar.textSize = 14f; avatar.typeface = Typeface.DEFAULT_BOLD; avatar.gravity = Gravity.CENTER
         val aShape = GradientDrawable(); aShape.shape = GradientDrawable.OVAL; aShape.setColor(avatarColors[Math.abs(v.title.hashCode()) % avatarColors.size])
-        avatar.background = aShape; avatar.elevation = dp(3).toFloat()
-        val alp = LinearLayout.LayoutParams(dp(40), dp(40)); alp.marginEnd = dp(12); row.addView(avatar, alp)
+        avatar.background = aShape; avatar.elevation = dp(2).toFloat()
+        val alp = LinearLayout.LayoutParams(dp(32), dp(32)); alp.marginEnd = dp(10); row.addView(avatar, alp)
 
         val col = LinearLayout(this); col.orientation = LinearLayout.VERTICAL
-        val title = TextView(this); title.text = v.title; title.setTextColor(Color.WHITE); title.textSize = 16f; title.maxLines = 2; title.ellipsize = android.text.TextUtils.TruncateAt.END
+        val title = TextView(this); title.text = v.title; title.setTextColor(Color.WHITE); title.textSize = 14f; title.maxLines = 2; title.ellipsize = android.text.TextUtils.TruncateAt.END
         col.addView(title)
+        
         val pos = prefs.position(v.id); val dur = if (v.duration > 0) v.duration else prefs.duration(v.id)
         val pct = if (pos > 0 && dur > 0) ((pos * 100) / dur).toInt().coerceIn(0, 100) else 0
         val sub = TextView(this); sub.text = if (pct > 0) fmt(v.duration) + "  •  شوهد " + pct + "%" else fmt(v.duration)
-        sub.setTextColor(gray); sub.textSize = 13f; sub.setPadding(0, dp(3), 0, 0); col.addView(sub)
+        sub.setTextColor(gray); sub.textSize = 11f; sub.setPadding(0, dp(2), 0, 0); col.addView(sub)
         row.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
 
         val trash = ImageView(this); trash.scaleType = ImageView.ScaleType.FIT_CENTER; trash.setImageDrawable(IconDrawable(IconDrawable.TRASH, Color.WHITE))
-        trash.setPadding(dp(10), dp(8), dp(10), dp(12)); trash.isFocusable = false; trash.contentDescription = "حذف"
+        trash.setPadding(dp(8), dp(6), dp(8), dp(10)); trash.isFocusable = false; trash.contentDescription = "حذف"
         trash.setOnClickListener { confirmDelete(v) }; make3D(trash, Color.parseColor("#C62828"), Color.parseColor("#7F0000"), 12)
-        row.addView(trash, LinearLayout.LayoutParams(dp(40), dp(42)).apply { setMargins(dp(4), 0, dp(4), dp(4)) })
+        row.addView(trash, LinearLayout.LayoutParams(dp(32), dp(34)).apply { setMargins(dp(4), 0, dp(4), dp(2)) })
 
         val dots = TextView(this); dots.text = "•••"; dots.setTextColor(Color.WHITE); dots.textSize = 14f; dots.gravity = Gravity.CENTER
-        dots.setPadding(dp(12), dp(6), dp(12), dp(10)); dots.isFocusable = false; dots.contentDescription = "خيارات"
+        dots.setPadding(dp(10), dp(4), dp(10), dp(8)); dots.isFocusable = false; dots.contentDescription = "خيارات"
         dots.setOnClickListener {
             val pm = PopupMenu(this, dots); pm.menu.add(0, 1, 0, "إعادة المشاهدة من البداية")
             pm.setOnMenuItemClickListener { prefs.resetProgress(v.id); refresh(); true }; pm.show()
         }
         make3D(dots, Color.parseColor("#3A3A3A"), Color.parseColor("#1C1C1C"), 12)
-        row.addView(dots, LinearLayout.LayoutParams(-2, -2).apply { setMargins(dp(4), 0, dp(8), dp(4)) })
+        row.addView(dots, LinearLayout.LayoutParams(-2, -2).apply { setMargins(dp(4), 0, dp(8), dp(2)) })
         card.addView(row); applyFont(box)
 
         if (animatedIds.add(v.id)) { box.alpha = 0f; box.translationY = dp(24).toFloat(); box.animate().alpha(1f).translationY(0f).setDuration(280).setInterpolator(DecelerateInterpolator()).start() }
@@ -861,9 +877,24 @@ class MainActivity : AppCompatActivity() {
         val f = FrameLayout(this); f.setBackgroundColor(Color.parseColor("#222222")); f.layoutParams = ViewGroup.LayoutParams(w, h)
         val shimmer = ShimmerView(this); f.addView(shimmer, FrameLayout.LayoutParams(-1, -1))
         val iv = ImageView(this); iv.scaleType = ImageView.ScaleType.CENTER_CROP; f.addView(iv, FrameLayout.LayoutParams(-1, -1)); loadThumb(v, iv, shimmer)
-        val badge = TextView(this); badge.text = fmt(v.duration); badge.setTextColor(Color.WHITE); badge.textSize = 12f; badge.typeface = Typeface.DEFAULT_BOLD; badge.layoutDirection = View.LAYOUT_DIRECTION_LTR
-        val bShape = GradientDrawable(); bShape.setColor(Color.parseColor("#CC000000")); bShape.cornerRadius = dp(6).toFloat(); badge.background = bShape; badge.setPadding(dp(7), dp(2), dp(7), dp(2))
-        f.addView(badge, FrameLayout.LayoutParams(-2, -2, Gravity.LEFT or Gravity.BOTTOM).apply { leftMargin = dp(10); bottomMargin = dp(10) })
+        
+        // إعادة المدة الزمنية (الأرقام) على الصورة
+        val badge = TextView(this)
+        badge.text = fmt(v.duration)
+        badge.setTextColor(Color.WHITE)
+        badge.textSize = 11f 
+        badge.typeface = Typeface.DEFAULT_BOLD
+        badge.layoutDirection = View.LAYOUT_DIRECTION_LTR
+        val bShape = GradientDrawable()
+        bShape.setColor(Color.parseColor("#CC000000"))
+        bShape.cornerRadius = dp(4).toFloat()
+        badge.background = bShape
+        badge.setPadding(dp(5), dp(1), dp(5), dp(1))
+        f.addView(badge, FrameLayout.LayoutParams(-2, -2, Gravity.LEFT or Gravity.BOTTOM).apply { 
+            leftMargin = dp(8)
+            bottomMargin = dp(8) 
+        })
+        
         val pos = prefs.position(v.id); val dur = if (v.duration > 0) v.duration else prefs.duration(v.id)
         if (pos > 0 && dur > 0) {
             val frac = (pos.toFloat() / dur.toFloat()).coerceIn(0f, 1f)
@@ -876,9 +907,9 @@ class MainActivity : AppCompatActivity() {
         val tagText: String? = when { watched -> "تم المشاهدة"; pos > 0 && dur > 0 && pos < dur - 3000 -> "-" + fmt(dur - pos); else -> null }
         if (tagText != null) {
             val tg = TextView(this); tg.text = tagText; tg.setTextColor(Color.WHITE); tg.textSize = 11f; tg.typeface = Typeface.DEFAULT_BOLD; tg.layoutDirection = View.LAYOUT_DIRECTION_LTR
-            val tgShape = GradientDrawable(); tgShape.setColor(Color.parseColor("#99000000")); tgShape.cornerRadius = dp(6).toFloat(); tg.background = tgShape; tg.setPadding(dp(7), dp(2), dp(7), dp(2))
+            val tgShape = GradientDrawable(); tgShape.setColor(Color.parseColor("#99000000")); tgShape.cornerRadius = dp(4).toFloat(); tg.background = tgShape; tg.setPadding(dp(5), dp(1), dp(5), dp(1))
             val side = if (watched) Gravity.LEFT else Gravity.RIGHT
-            f.addView(tg, FrameLayout.LayoutParams(-2, -2, side or Gravity.TOP).apply { leftMargin = dp(10); rightMargin = dp(10); topMargin = dp(10) })
+            f.addView(tg, FrameLayout.LayoutParams(-2, -2, side or Gravity.TOP).apply { leftMargin = dp(8); rightMargin = dp(8); topMargin = dp(8) })
         }
         return f
     }
@@ -935,9 +966,13 @@ class MainActivity : AppCompatActivity() {
         playerRoot = FrameLayout(this); playerRoot.setBackgroundColor(Color.BLACK); playerRoot.isClickable = true
         surfaceView = SurfaceView(this)
         surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
-            override fun surfaceCreated(h: SurfaceHolder) { mp?.let { try { it.setDisplay(h) } catch (_: Exception) {} }; pending?.let { pending = null; startPlayback(it) } }
+            override fun surfaceCreated(h: SurfaceHolder) { 
+                player?.setVideoSurfaceView(surfaceView)
+            }
             override fun surfaceChanged(h: SurfaceHolder, f: Int, w: Int, hh: Int) {}
-            override fun surfaceDestroyed(h: SurfaceHolder) { mp?.let { try { it.setDisplay(null) } catch (_: Exception) {} } }
+            override fun surfaceDestroyed(h: SurfaceHolder) { 
+                player?.clearVideoSurfaceView(surfaceView) 
+            }
         })
         playerRoot.addView(surfaceView, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
 
@@ -958,7 +993,6 @@ class MainActivity : AppCompatActivity() {
             }
         })
         
-        // إضافة طبقة شفافة لاستقبال الإيماءات (حتى لا تسرق النقرات من الأزرار)
         val gestureOverlay = View(this)
         gestureOverlay.setOnTouchListener { _, e -> gestures.onTouchEvent(e); true }
         playerRoot.addView(gestureOverlay, FrameLayout.LayoutParams(-1, -1))
@@ -980,7 +1014,7 @@ class MainActivity : AppCompatActivity() {
         seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {}
             override fun onStartTrackingTouch(s: SeekBar?) { userSeeking = true }
-            override fun onStopTrackingTouch(s: SeekBar?) { userSeeking = false; if (prepared) mp?.seekTo(seekBar.progress) }
+            override fun onStopTrackingTouch(s: SeekBar?) { userSeeking = false; player?.seekTo(seekBar.progress.toLong()) }
         })
         seekRow.addView(seekBar, LinearLayout.LayoutParams(0, -2, 1f))
         timeText = TextView(this); timeText.setTextColor(Color.WHITE); timeText.textSize = 12f; timeText.text = "0:00 / 0:00"; timeText.setPadding(dp(6), 0, dp(6), 0)
@@ -989,13 +1023,10 @@ class MainActivity : AppCompatActivity() {
         val btnRow = LinearLayout(this); btnRow.orientation = LinearLayout.HORIZONTAL; btnRow.gravity = Gravity.CENTER
         playPause = iconBtn(IconDrawable.PAUSE, Color.parseColor("#FF3D3D"), Color.parseColor("#B71C1C")) {
             try {
-                val p = mp
+                val p = player
                 if (p != null && prepared) { 
                     if (p.isPlaying) { p.pause(); setPlayIcon(false) } 
-                    else { 
-                        if (surfaceView.holder.surface.isValid) p.setDisplay(surfaceView.holder)
-                        p.start(); setPlayIcon(true) 
-                    } 
+                    else { p.play(); setPlayIcon(true) } 
                 } else {
                     current?.let { startPlayback(it) }
                 }
@@ -1045,11 +1076,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun seekBy(delta: Int) {
-        val p = mp ?: return; if (!prepared) return
+        val p = player ?: return; if (!prepared) return
         try {
             val t = (p.currentPosition + delta).coerceIn(0, p.duration)
-            if (Build.VERSION.SDK_INT >= 26) p.seekTo(t.toLong(), MediaPlayer.SEEK_CLOSEST) else p.seekTo(t)
-            seekBar.progress = t
+            p.seekTo(t)
+            seekBar.progress = t.toInt()
         } catch (_: Exception) {}
     }
 
@@ -1065,8 +1096,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun applySpeed() {
         val s = speeds[speedIdx]; speedBtn.text = fmtSpeed(s)
-        val p = mp ?: return; if (!prepared || Build.VERSION.SDK_INT < 23) return
-        try { val was = p.isPlaying; p.playbackParams = p.playbackParams.setSpeed(s); if (!was) p.pause() } catch (_: Exception) {}
+        val p = player ?: return
+        p.setPlaybackSpeed(s)
     }
 
     private fun enterPip() {
@@ -1081,7 +1112,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        if (Build.VERSION.SDK_INT >= 26 && playerRoot.visibility == View.VISIBLE && prepared && mp?.isPlaying == true) { enterPip() }
+        if (Build.VERSION.SDK_INT >= 26 && playerRoot.visibility == View.VISIBLE && prepared && player?.isPlaying == true) { enterPip() }
     }
 
     @Suppress("DEPRECATION", "NewApi")
@@ -1095,7 +1126,7 @@ class MainActivity : AppCompatActivity() {
     override fun onStop() {
         super.onStop()
         if (Build.VERSION.SDK_INT >= 24 && isInPictureInPictureMode) {
-            try { val p = mp; if (p != null && prepared && p.isPlaying) p.pause() } catch (_: Exception) {}
+            try { val p = player; if (p != null && prepared && p.isPlaying) p.pause() } catch (_: Exception) {}
             setPlayIcon(false)
         }
     }
@@ -1110,55 +1141,49 @@ class MainActivity : AppCompatActivity() {
     private fun startPlayback(v: VideoItem) {
         releasePlayer()
         
-        // فحص إمكانية قراءة الملف لتجنب انهيار التطبيق
-        var canRead = false
-        try {
-            contentResolver.openFileDescriptor(v.uri, "r")?.use { pfd ->
-                canRead = pfd.fileDescriptor.valid()
-            }
-        } catch (_: Exception) { canRead = false }
-
-        if (!canRead) {
-            Toast.makeText(this@MainActivity, "لا يمكن قراءة هذا الفيديو، قد يكون محذوفاً أو تم سحب الصلاحية منه", Toast.LENGTH_LONG).show()
-            setPlayIcon(false)
-            return
-        }
-
-        val p = MediaPlayer(); mp = p; prepared = false
-        try {
-            p.setAudioAttributes(AudioAttributes.Builder().setContentType(AudioAttributes.CONTENT_TYPE_MOVIE).setUsage(AudioAttributes.USAGE_MEDIA).build())
-            try { p.setWakeMode(this@MainActivity.applicationContext, PowerManager.PARTIAL_WAKE_LOCK) } catch (_: Exception) {}
-            p.setDataSource(this, v.uri)
-            
-            if (surfaceView.holder.surface.isValid) p.setDisplay(surfaceView.holder)
-            
-            p.setOnVideoSizeChangedListener { _, w, h ->
-                videoW = w; videoH = h
-                if (w > h && !isLandscape) { isLandscape = true; requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE }
+        val exoPlayer = ExoPlayer.Builder(this@MainActivity).build()
+        player = exoPlayer
+        
+        exoPlayer.addListener(object : Player.Listener {
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                videoW = videoSize.width
+                videoH = videoSize.height
+                if (videoW > videoH && !isLandscape) { 
+                    isLandscape = true
+                    requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE 
+                }
                 fitVideo()
             }
-            p.setOnPreparedListener { m ->
-                try {
-                    prepared = true; seekBar.max = m.duration
-                    if (surfaceView.holder.surface.isValid) m.setDisplay(surfaceView.holder)
-                    val saved = prefs.position(v.id); if (saved > 0 && saved < m.duration - 3000) m.seekTo(saved.toInt())
-                    m.start(); setPlayIcon(true); if (speedIdx != 2) applySpeed()
-                } catch (e: Exception) { 
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_READY) {
+                    prepared = true
+                    seekBar.max = exoPlayer.duration.toInt()
+                    val saved = prefs.position(v.id)
+                    if (saved > 0 && saved < exoPlayer.duration - 3000) exoPlayer.seekTo(saved)
+                    if (speedIdx != 2) applySpeed()
+                } else if (playbackState == Player.STATE_ENDED) {
+                    prefs.savePosition(v.id, 0L, exoPlayer.duration)
+                    prefs.markWatched(v.id)
                     setPlayIcon(false)
-                    Toast.makeText(this@MainActivity, "فشل بدء التشغيل: ${e.message}", Toast.LENGTH_SHORT).show() 
                 }
             }
-            p.setOnCompletionListener { prefs.savePosition(v.id, 0L, it.duration.toLong()); prefs.markWatched(v.id); setPlayIcon(false) }
-            p.setOnErrorListener { _, what, extra -> 
-                setPlayIcon(false)
-                Toast.makeText(this@MainActivity, "خطأ في الفيديو: $what ($extra)", Toast.LENGTH_SHORT).show()
-                true 
+
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                setPlayIcon(isPlaying)
             }
-            p.prepareAsync()
-        } catch (e: Exception) { 
-            setPlayIcon(false) 
-            Toast.makeText(this@MainActivity, "خطأ في التحميل: ${e.message}", Toast.LENGTH_SHORT).show()
-        }
+
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                setPlayIcon(false)
+                Toast.makeText(this@MainActivity, "خطأ في الفيديو: ${error.errorCodeName}", Toast.LENGTH_LONG).show()
+            }
+        })
+
+        val mediaItem = MediaItem.fromUri(v.uri)
+        exoPlayer.setMediaItem(mediaItem)
+        exoPlayer.setVideoSurfaceView(surfaceView)
+        exoPlayer.prepare()
+        exoPlayer.playWhenReady = true
     }
 
     private fun fitVideo() {
@@ -1184,8 +1209,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun closePlayer() {
-        val p = mp; val c = current
-        if (p != null && c != null && prepared) { try { prefs.savePosition(c.id, p.currentPosition.toLong(), p.duration.toLong()) } catch (_: Exception) {} }
+        val p = player; val c = current
+        if (p != null && c != null && prepared) { 
+            try { prefs.savePosition(c.id, p.currentPosition, p.duration) } catch (_: Exception) {} 
+        }
         releasePlayer(); current = null; pending = null; videoW = 0; videoH = 0; fillMode = false; locked = false; speedIdx = 2
         ui.removeCallbacks(hideHud); ui.removeCallbacks(hideUnlock); hudText.visibility = View.GONE; unlockBtn.visibility = View.GONE
         val lp = window.attributes; lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE; window.attributes = lp
@@ -1193,8 +1220,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun releasePlayer() {
-        val p = mp ?: return; mp = null; prepared = false
-        try { p.setOnPreparedListener(null); p.setOnCompletionListener(null); p.release() } catch (_: Exception) {}
+        player?.release()
+        player = null
+        prepared = false
     }
 
     override fun onDestroy() {
