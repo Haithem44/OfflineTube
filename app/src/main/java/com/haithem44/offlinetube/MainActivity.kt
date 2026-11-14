@@ -80,6 +80,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.AspectRatioFrameLayout
 import java.io.File
 import java.io.FileOutputStream
 import java.util.Locale
@@ -249,6 +250,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var rootFrame: FrameLayout
     private lateinit var playerRoot: FrameLayout
+    private lateinit var aspectLayout: AspectRatioFrameLayout // الحاوية المسؤولة عن ملاءمة الفيديو
     private lateinit var surfaceView: SurfaceView
     private lateinit var controls: LinearLayout
     private lateinit var topBar: LinearLayout
@@ -270,7 +272,6 @@ class MainActivity : AppCompatActivity() {
     private var videoW = 0
     private var videoH = 0
     private var isLandscape = false
-    private var fillMode = false
     private var userSeeking = false
     private var lastSaveTime = 0L
     private var locked = false
@@ -826,7 +827,7 @@ class MainActivity : AppCompatActivity() {
         val w = screenW() - dp(24); val th = w * 9 / 16
         val box = LinearLayout(this); box.orientation = LinearLayout.VERTICAL
         
-        // تقليل المسافات بين الفيديوهات
+        // 1. تقليل المسافات بين الفيديوهات لتصبح متقاربة جداً
         box.setPadding(dp(12), dp(2), dp(12), dp(2))
         
         val card = LinearLayout(this); card.orientation = LinearLayout.VERTICAL; card.setPadding(0, 0, 0, dp(6))
@@ -848,11 +849,10 @@ class MainActivity : AppCompatActivity() {
         val alp = LinearLayout.LayoutParams(dp(32), dp(32)); alp.marginEnd = dp(10); row.addView(avatar, alp)
 
         val col = LinearLayout(this); col.orientation = LinearLayout.VERTICAL
-        // تكبير الخط قليلاً بعد إزالة النص السفلي
+        
+        // 2. إزالة كلمة "فيديو" وتكبير الخط قليلاً
         val title = TextView(this); title.text = v.title; title.setTextColor(Color.WHITE); title.textSize = 15f; title.maxLines = 2; title.ellipsize = android.text.TextUtils.TruncateAt.END
         col.addView(title)
-        
-        // تم إزالة كلمة "فيديو" من هنا
         
         row.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
 
@@ -967,6 +967,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun buildPlayer() {
         playerRoot = FrameLayout(this); playerRoot.setBackgroundColor(Color.BLACK); playerRoot.isClickable = true
+        
+        // 3. استخدام AspectRatioFrameLayout لضمان عدم قص الفيديو في الشاشة المسطحة
+        aspectLayout = AspectRatioFrameLayout(this)
+        aspectLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT // يحافظ على الصورة كاملة
+        
         surfaceView = SurfaceView(this)
         surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(h: SurfaceHolder) { 
@@ -977,7 +982,10 @@ class MainActivity : AppCompatActivity() {
                 player?.clearVideoSurfaceView(surfaceView) 
             }
         })
-        playerRoot.addView(surfaceView, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
+        
+        // إضافة الفيديو داخل الحاوية المسؤولة عن الأبعاد
+        aspectLayout.addView(surfaceView, FrameLayout.LayoutParams(-1, -1))
+        playerRoot.addView(aspectLayout, FrameLayout.LayoutParams(-1, -1))
 
         gestures = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e: MotionEvent): Boolean { gestureMode = 0; return true }
@@ -999,8 +1007,6 @@ class MainActivity : AppCompatActivity() {
         val gestureOverlay = View(this)
         gestureOverlay.setOnTouchListener { _, e -> gestures.onTouchEvent(e); true }
         playerRoot.addView(gestureOverlay, FrameLayout.LayoutParams(-1, -1))
-
-        playerRoot.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> fitVideo() }
 
         topBar = LinearLayout(this); topBar.orientation = LinearLayout.HORIZONTAL; topBar.gravity = Gravity.CENTER_VERTICAL; topBar.setBackgroundColor(Color.parseColor("#88000000"))
         val back = ImageView(this); back.scaleType = ImageView.ScaleType.FIT_CENTER; back.setImageDrawable(IconDrawable(IconDrawable.BACK, Color.WHITE))
@@ -1048,7 +1054,18 @@ class MainActivity : AppCompatActivity() {
         if (Build.VERSION.SDK_INT >= 26 && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
             btnRow.addView(iconBtn(IconDrawable.PIP) { enterPip() }, btnLp())
         }
-        btnRow.addView(iconBtn(IconDrawable.EXPAND) { fillMode = !fillMode; fitVideo() }, btnLp())
+        
+        // زر التكبير والتصغير (يبدل بين ملء الشاشة بالقص أو العرض الكامل)
+        btnRow.addView(iconBtn(IconDrawable.EXPAND) { 
+            if (aspectLayout.resizeMode == AspectRatioFrameLayout.RESIZE_MODE_FIT) {
+                aspectLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                showHud("ملء الشاشة (قص)")
+            } else {
+                aspectLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                showHud("عرض كامل الفيديو")
+            }
+        }, btnLp())
+        
         btnRow.addView(iconBtn(IconDrawable.ROTATE) { toggleFullscreen() }, btnLp())
         controls.addView(btnRow, LinearLayout.LayoutParams(-1, -2))
         playerRoot.addView(controls, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
@@ -1135,7 +1152,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openPlayer(v: VideoItem) {
-        releasePlayer(); current = v; videoW = 0; videoH = 0; fillMode = false; locked = false; speedIdx = 2; speedBtn.text = "1x"
+        releasePlayer(); current = v; videoW = 0; videoH = 0; locked = false; speedIdx = 2; speedBtn.text = "1x"
+        aspectLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT // دائماً نبدأ بالعرض الكامل
         unlockBtn.visibility = View.GONE; hudText.visibility = View.GONE; playerTitle.text = v.title; setPlayIcon(true); seekBar.progress = 0
         controls.visibility = View.VISIBLE; topBar.visibility = View.VISIBLE; playerRoot.visibility = View.VISIBLE; hideSystemBars(true)
         if (surfaceView.holder.surface.isValid) { startPlayback(v) } else { pending = v }
@@ -1155,7 +1173,6 @@ class MainActivity : AppCompatActivity() {
                     isLandscape = true
                     requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE 
                 }
-                fitVideo()
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -1187,19 +1204,9 @@ class MainActivity : AppCompatActivity() {
         exoPlayer.setVideoSurfaceView(surfaceView)
         exoPlayer.prepare()
         
-        // إجبار التشغيل التلقائي فور الفتح
+        // 4. إجبار التشغيل التلقائي
         exoPlayer.playWhenReady = true
         exoPlayer.play()
-    }
-
-    private fun fitVideo() {
-        val cw = playerRoot.width; val ch = playerRoot.height
-        if (videoW <= 0 || videoH <= 0 || cw <= 0 || ch <= 0) return
-        val sx = cw.toFloat() / videoW; val sy = ch.toFloat() / videoH
-        val scale = if (fillMode) maxOf(sx, sy) else minOf(sx, sy)
-        val nw = (videoW * scale).toInt(); val nh = (videoH * scale).toInt()
-        val lp = surfaceView.layoutParams as? FrameLayout.LayoutParams ?: return
-        if (lp.width != nw || lp.height != nh) { lp.width = nw; lp.height = nh; lp.gravity = Gravity.CENTER; surfaceView.layoutParams = lp }
     }
 
     private fun toggleFullscreen() {
@@ -1219,7 +1226,7 @@ class MainActivity : AppCompatActivity() {
         if (p != null && c != null && prepared) { 
             try { prefs.savePosition(c.id, p.currentPosition, p.duration) } catch (_: Exception) {} 
         }
-        releasePlayer(); current = null; pending = null; videoW = 0; videoH = 0; fillMode = false; locked = false; speedIdx = 2
+        releasePlayer(); current = null; pending = null; videoW = 0; videoH = 0; locked = false; speedIdx = 2
         ui.removeCallbacks(hideHud); ui.removeCallbacks(hideUnlock); hudText.visibility = View.GONE; unlockBtn.visibility = View.GONE
         val lp = window.attributes; lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE; window.attributes = lp
         playerRoot.visibility = View.GONE; isLandscape = false; requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED; hideSystemBars(false); refresh()
