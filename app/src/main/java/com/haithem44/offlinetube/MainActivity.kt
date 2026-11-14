@@ -225,7 +225,8 @@ class MainActivity : AppCompatActivity() {
 
     private val thumbW: Int by lazy { maxOf(resources.displayMetrics.widthPixels, 1080).coerceAtMost(2160) }
     private val thumbH: Int by lazy { thumbW * 9 / 16 }
-    private val thumbDir: File by lazy { File(cacheDir, "thumbs_hq").apply { mkdirs() } }
+    // تغيير اسم المجلد لإجبار التطبيق على تحميل صور بجودة عالية جديدة
+    private val thumbDir: File by lazy { File(cacheDir, "thumbs_hq_v2").apply { mkdirs() } }
 
     private fun loadFont(name: String): Typeface? {
         if (Build.VERSION.SDK_INT < 26) return null
@@ -263,7 +264,6 @@ class MainActivity : AppCompatActivity() {
     private val pauseDrawable = IconDrawable(IconDrawable.PAUSE, Color.WHITE)
     private val playDrawable = IconDrawable(IconDrawable.PLAY_FILLED, Color.WHITE)
     
-    // ExoPlayer
     private var player: ExoPlayer? = null
     private var prepared = false
     private var current: VideoItem? = null
@@ -848,7 +848,6 @@ class MainActivity : AppCompatActivity() {
         val title = TextView(this); title.text = v.title; title.setTextColor(Color.WHITE); title.textSize = 14f; title.maxLines = 2; title.ellipsize = android.text.TextUtils.TruncateAt.END
         col.addView(title)
         
-        // إزالة الأرقام من النص السفلي
         val sub = TextView(this); sub.text = "فيديو" 
         sub.setTextColor(gray); sub.textSize = 11f; sub.setPadding(0, dp(2), 0, 0); col.addView(sub)
         row.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
@@ -877,7 +876,6 @@ class MainActivity : AppCompatActivity() {
         val shimmer = ShimmerView(this); f.addView(shimmer, FrameLayout.LayoutParams(-1, -1))
         val iv = ImageView(this); iv.scaleType = ImageView.ScaleType.CENTER_CROP; f.addView(iv, FrameLayout.LayoutParams(-1, -1)); loadThumb(v, iv, shimmer)
         
-        // المدة الزمنية (الأرقام) على الصورة
         val badge = TextView(this)
         badge.text = fmt(v.duration)
         badge.setTextColor(Color.WHITE)
@@ -929,27 +927,32 @@ class MainActivity : AppCompatActivity() {
 
     private fun thumbFile(v: VideoItem) = File(thumbDir, v.id.toString() + "_" + thumbW + ".jpg")
     private fun readDisk(v: VideoItem): Bitmap? = try { val f = thumbFile(v); if (f.exists() && f.length() > 0) BitmapFactory.decodeFile(f.absolutePath) else null } catch (e: Throwable) { null }
-    private fun writeDisk(v: VideoItem, bmp: Bitmap) { try { FileOutputStream(thumbFile(v)).use { out -> bmp.compress(Bitmap.CompressFormat.JPEG, 95, out) } } catch (_: Exception) {} }
+    private fun writeDisk(v: VideoItem, bmp: Bitmap) { try { FileOutputStream(thumbFile(v)).use { out -> bmp.compress(Bitmap.CompressFormat.JPEG, 100, out) } } catch (_: Exception) {} }
 
     private fun extractFrame(v: VideoItem): Bitmap? {
         val r = MediaMetadataRetriever()
         try {
-            r.setDataSource(this, v.uri); val durUs = v.duration * 1000L; val t = if (durUs > 0) (durUs * 0.10).toLong() else 0L
-            var vw = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
-            var vh = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
-            val rot = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
-            if (rot == 90 || rot == 270) { val tmp = vw; vw = vh; vh = tmp }
-            var frame: Bitmap? = null
-            if (Build.VERSION.SDK_INT >= 27 && vw > 0 && vh > 0) {
-                val targetW = minOf(thumbW, vw); val targetH = maxOf(1, (targetW.toLong() * vh / vw).toInt())
-                frame = r.getScaledFrameAtTime(t, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, targetW, targetH)
+            r.setDataSource(this, v.uri)
+            
+            // جلب الإطار بأقصى دقة ممكنة من الفيديو الأصلي
+            var frame = r.getFrameAtTime(1000000, MediaMetadataRetriever.OPTION_CLOSEST) 
+                ?: r.getFrameAtTime(-1)
+            
+            if (frame != null) {
+                // الحفاظ على أبعاد الصورة الأصلية وتصغيرها بجودة عالية (Anti-aliasing)
+                val targetW = thumbW
+                val targetH = (frame.height.toFloat() / frame.width * targetW).toInt()
+                
+                if (frame.width > targetW) {
+                    val scaled = Bitmap.createScaledBitmap(frame, targetW, targetH, true)
+                    if (scaled != frame) frame.recycle()
+                    return scaled
+                }
+                return frame
             }
-            if (frame == null) {
-                val raw = r.getFrameAtTime(t, MediaMetadataRetriever.OPTION_CLOSEST_SYNC) ?: r.getFrameAtTime(-1)
-                if (raw != null) { frame = if (raw.width > thumbW) { val nh = (raw.height.toLong() * thumbW / raw.width).toInt(); Bitmap.createScaledBitmap(raw, thumbW, nh, true) } else raw }
-            }
-            if (frame != null) return frame
         } catch (_: Throwable) {} finally { try { r.release() } catch (_: Exception) {} }
+        
+        // خطة بديلة إذا فشل استخراج الإطار
         return try {
             if (Build.VERSION.SDK_INT >= 29) contentResolver.loadThumbnail(v.uri, Size(thumbW, thumbH), null)
             else {
