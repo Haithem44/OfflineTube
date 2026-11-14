@@ -225,7 +225,6 @@ class MainActivity : AppCompatActivity() {
 
     private val thumbW: Int by lazy { maxOf(resources.displayMetrics.widthPixels, 1080).coerceAtMost(2160) }
     private val thumbH: Int by lazy { thumbW * 9 / 16 }
-    // تغيير اسم المجلد لإجبار التطبيق على تحميل صور بجودة عالية جديدة
     private val thumbDir: File by lazy { File(cacheDir, "thumbs_hq_v2").apply { mkdirs() } }
 
     private fun loadFont(name: String): Typeface? {
@@ -825,9 +824,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun videoItemView(v: VideoItem): View {
         val w = screenW() - dp(24); val th = w * 9 / 16
-        val box = LinearLayout(this); box.orientation = LinearLayout.VERTICAL; box.setPadding(dp(12), dp(4), dp(12), dp(4))
+        val box = LinearLayout(this); box.orientation = LinearLayout.VERTICAL
         
-        val card = LinearLayout(this); card.orientation = LinearLayout.VERTICAL; card.setPadding(0, 0, 0, dp(8))
+        // تقليل المسافات بين الفيديوهات
+        box.setPadding(dp(12), dp(2), dp(12), dp(2))
+        
+        val card = LinearLayout(this); card.orientation = LinearLayout.VERTICAL; card.setPadding(0, 0, 0, dp(6))
         setBgKeepPad(card, raised(Color.parseColor("#2B2B2B"), Color.parseColor("#181818"), 18))
         card.elevation = dp(3).toFloat(); card.clipToOutline = true
         card.outlineProvider = object : ViewOutlineProvider() { override fun getOutline(view: View, o: Outline) { o.setRoundRect(0, 0, view.width, view.height, dp(18).toFloat()) } }
@@ -835,7 +837,8 @@ class MainActivity : AppCompatActivity() {
         
         card.addView(thumbFrame(v, w, th), LinearLayout.LayoutParams(w, th))
 
-        val row = LinearLayout(this); row.orientation = LinearLayout.HORIZONTAL; row.gravity = Gravity.CENTER_VERTICAL; row.setPadding(dp(10), dp(8), dp(6), 0)
+        val row = LinearLayout(this); row.orientation = LinearLayout.HORIZONTAL; row.gravity = Gravity.CENTER_VERTICAL
+        row.setPadding(dp(10), dp(6), dp(6), dp(6))
         
         val avatar = TextView(this)
         val letter = v.title.trim().firstOrNull()?.toString()?.uppercase() ?: "V"
@@ -845,11 +848,12 @@ class MainActivity : AppCompatActivity() {
         val alp = LinearLayout.LayoutParams(dp(32), dp(32)); alp.marginEnd = dp(10); row.addView(avatar, alp)
 
         val col = LinearLayout(this); col.orientation = LinearLayout.VERTICAL
-        val title = TextView(this); title.text = v.title; title.setTextColor(Color.WHITE); title.textSize = 14f; title.maxLines = 2; title.ellipsize = android.text.TextUtils.TruncateAt.END
+        // تكبير الخط قليلاً بعد إزالة النص السفلي
+        val title = TextView(this); title.text = v.title; title.setTextColor(Color.WHITE); title.textSize = 15f; title.maxLines = 2; title.ellipsize = android.text.TextUtils.TruncateAt.END
         col.addView(title)
         
-        val sub = TextView(this); sub.text = "فيديو" 
-        sub.setTextColor(gray); sub.textSize = 11f; sub.setPadding(0, dp(2), 0, 0); col.addView(sub)
+        // تم إزالة كلمة "فيديو" من هنا
+        
         row.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
 
         val trash = ImageView(this); trash.scaleType = ImageView.ScaleType.FIT_CENTER; trash.setImageDrawable(IconDrawable(IconDrawable.TRASH, Color.WHITE))
@@ -934,12 +938,10 @@ class MainActivity : AppCompatActivity() {
         try {
             r.setDataSource(this, v.uri)
             
-            // جلب الإطار بأقصى دقة ممكنة من الفيديو الأصلي
             var frame = r.getFrameAtTime(1000000, MediaMetadataRetriever.OPTION_CLOSEST) 
                 ?: r.getFrameAtTime(-1)
             
             if (frame != null) {
-                // الحفاظ على أبعاد الصورة الأصلية وتصغيرها بجودة عالية (Anti-aliasing)
                 val targetW = thumbW
                 val targetH = (frame.height.toFloat() / frame.width * targetW).toInt()
                 
@@ -952,7 +954,6 @@ class MainActivity : AppCompatActivity() {
             }
         } catch (_: Throwable) {} finally { try { r.release() } catch (_: Exception) {} }
         
-        // خطة بديلة إذا فشل استخراج الإطار
         return try {
             if (Build.VERSION.SDK_INT >= 29) contentResolver.loadThumbnail(v.uri, Size(thumbW, thumbH), null)
             else {
@@ -1185,7 +1186,10 @@ class MainActivity : AppCompatActivity() {
         exoPlayer.setMediaItem(mediaItem)
         exoPlayer.setVideoSurfaceView(surfaceView)
         exoPlayer.prepare()
+        
+        // إجبار التشغيل التلقائي فور الفتح
         exoPlayer.playWhenReady = true
+        exoPlayer.play()
     }
 
     private fun fitVideo() {
