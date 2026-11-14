@@ -1,13 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- صلاحيات قراءة الفيديوهات (لأندرويد 13 فما فوق) -->
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
-    
-    <!-- صلاحيات قراءة الفيديوهات (لأندرويد 12 فما دون) -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
-    
-    <!-- صلاحية حالة الشبكة (لحل مشكلة SecurityException في مشغل الفيديو) -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <application
