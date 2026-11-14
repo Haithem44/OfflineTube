@@ -511,14 +511,29 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun iconBtn(kind: Int, top: Int = Color.parseColor("#3A3A3A"), bottom: Int = Color.parseColor("#1C1C1C"), onClick: () -> Unit): ImageView {
+    // زر عصري وأنيق للمشغل (شكل دائري، خلفية شفافة، وتأثير Scale)
+    private fun makePlayerBtn(kind: Int, bgColor: Int = Color.parseColor("#33FFFFFF"), onClick: () -> Unit): ImageView {
         val b = ImageView(this)
-        b.scaleType = ImageView.ScaleType.FIT_CENTER; b.setImageDrawable(IconDrawable(kind, Color.WHITE))
-        b.setPadding(dp(11), dp(9), dp(11), dp(13)); b.setOnClickListener { onClick() }
-        make3D(b, top, bottom, 24); return b
+        b.scaleType = ImageView.ScaleType.FIT_CENTER
+        b.setImageDrawable(IconDrawable(kind, Color.WHITE))
+        b.setPadding(dp(12), dp(12), dp(12), dp(12))
+        
+        val bg = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(bgColor)
+        }
+        b.background = bg
+        b.setOnClickListener { onClick() }
+        
+        b.setOnTouchListener { view, e ->
+            when (e.action) {
+                MotionEvent.ACTION_DOWN -> view.animate().scaleX(0.85f).scaleY(0.85f).setDuration(100).start()
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> view.animate().scaleX(1f).scaleY(1f).setDuration(100).start()
+            }
+            false
+        }
+        return b
     }
-
-    private fun btnLp() = LinearLayout.LayoutParams(dp(46), dp(48)).apply { setMargins(dp(5), dp(2), dp(5), dp(2)) }
 
     private fun findImageRes(name: String): Int {
         var id = resources.getIdentifier(name, "drawable", packageName)
@@ -660,7 +675,7 @@ class MainActivity : AppCompatActivity() {
         val s = query.trim().lowercase()
         var list: List<VideoItem> = all.filter { s.isEmpty() || it.title.lowercase().contains(s) }
         list = when (tab) {
-            1 -> list.filter { prefs.position(it.id) > 0L }
+            1 -> list.filter { prefs.position(it.id) > 0L && !prefs.watched(it.id) }
             2 -> list.sortedByDescending { it.duration }
             3 -> list.sortedBy { it.duration }
             4 -> list.filter { it.duration in 1L..60000L }
@@ -1052,7 +1067,9 @@ class MainActivity : AppCompatActivity() {
         seekRow.addView(timeText); controls.addView(seekRow, LinearLayout.LayoutParams(-1, -2))
 
         val btnRow = LinearLayout(this); btnRow.orientation = LinearLayout.HORIZONTAL; btnRow.gravity = Gravity.CENTER
-        playPause = iconBtn(IconDrawable.PAUSE, Color.parseColor("#FF3D3D"), Color.parseColor("#B71C1C")) {
+        
+        // زر التشغيل (بلون أحمر وأيقونة بيضاء)
+        playPause = makePlayerBtn(IconDrawable.PAUSE, Color.parseColor("#FF0000")) {
             try {
                 val p = player
                 if (p != null && prepared) { 
@@ -1065,18 +1082,36 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this@MainActivity, "فشل التشغيل: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
-        btnRow.addView(playPause, LinearLayout.LayoutParams(dp(56), dp(58)).apply { setMargins(dp(5), dp(2), dp(5), dp(2)) })
+        btnRow.addView(playPause, LinearLayout.LayoutParams(dp(52), dp(52)).apply { setMargins(dp(5), dp(2), dp(5), dp(2)) })
 
-        speedBtn = TextView(this); speedBtn.text = "1x"; speedBtn.setTextColor(Color.WHITE); speedBtn.textSize = 14f; speedBtn.typeface = Typeface.DEFAULT_BOLD; speedBtn.gravity = Gravity.CENTER; speedBtn.setPadding(dp(4), dp(6), dp(4), dp(10))
+        // زر السرعة (نص داخل دائرة شفافة)
+        speedBtn = TextView(this)
+        speedBtn.text = "1x"
+        speedBtn.setTextColor(Color.WHITE)
+        speedBtn.textSize = 14f
+        speedBtn.typeface = Typeface.DEFAULT_BOLD
+        speedBtn.gravity = Gravity.CENTER
+        val speedBg = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.parseColor("#33FFFFFF")) }
+        speedBtn.background = speedBg
         speedBtn.setOnClickListener { speedIdx = (speedIdx + 1) % speeds.size; applySpeed(); showHud("السرعة " + fmtSpeed(speeds[speedIdx])) }
-        make3D(speedBtn, Color.parseColor("#3A3A3A"), Color.parseColor("#1C1C1C"), 24)
-        btnRow.addView(speedBtn, LinearLayout.LayoutParams(dp(54), dp(48)).apply { setMargins(dp(5), dp(2), dp(5), dp(2)) })
-        btnRow.addView(iconBtn(IconDrawable.LOCK) { setLocked(true) }, btnLp())
+        // إضافة تأثير اللمس
+        speedBtn.setOnTouchListener { view, e ->
+            when (e.action) {
+                MotionEvent.ACTION_DOWN -> view.animate().scaleX(0.85f).scaleY(0.85f).setDuration(100).start()
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> view.animate().scaleX(1f).scaleY(1f).setDuration(100).start()
+            }
+            false
+        }
+        btnRow.addView(speedBtn, LinearLayout.LayoutParams(dp(48), dp(48)).apply { setMargins(dp(5), dp(2), dp(5), dp(2)) })
+
+        // باقي الأزرار الدائرية الشفافة
+        btnRow.addView(makePlayerBtn(IconDrawable.LOCK) { setLocked(true) }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { setMargins(dp(5), 0, dp(5), 0) })
 
         if (Build.VERSION.SDK_INT >= 26 && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
-            btnRow.addView(iconBtn(IconDrawable.PIP) { enterPip() }, btnLp())
+            btnRow.addView(makePlayerBtn(IconDrawable.PIP) { enterPip() }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { setMargins(dp(5), 0, dp(5), 0) })
         }
-        btnRow.addView(iconBtn(IconDrawable.EXPAND) { 
+        
+        btnRow.addView(makePlayerBtn(IconDrawable.EXPAND) { 
             if (aspectLayout.resizeMode == AspectRatioFrameLayout.RESIZE_MODE_FIT) {
                 aspectLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                 showHud("ملء الشاشة (قص)")
@@ -1084,14 +1119,16 @@ class MainActivity : AppCompatActivity() {
                 aspectLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                 showHud("عرض كامل الفيديو")
             }
-        }, btnLp())
-        btnRow.addView(iconBtn(IconDrawable.ROTATE) { toggleFullscreen() }, btnLp())
+        }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { setMargins(dp(5), 0, dp(5), 0) })
+        
+        btnRow.addView(makePlayerBtn(IconDrawable.ROTATE) { toggleFullscreen() }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { setMargins(dp(5), 0, dp(5), 0) })
+        
         controls.addView(btnRow, LinearLayout.LayoutParams(-1, -2))
         playerRoot.addView(controls, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
 
-        unlockBtn = iconBtn(IconDrawable.UNLOCK, Color.parseColor("#FF3D3D"), Color.parseColor("#B71C1C")) { setLocked(false) }
+        unlockBtn = makePlayerBtn(IconDrawable.UNLOCK, Color.parseColor("#FF0000")) { setLocked(false) }
         unlockBtn.visibility = View.GONE
-        playerRoot.addView(unlockBtn, FrameLayout.LayoutParams(dp(54), dp(56), Gravity.LEFT or Gravity.CENTER_VERTICAL).apply { leftMargin = dp(24) })
+        playerRoot.addView(unlockBtn, FrameLayout.LayoutParams(dp(52), dp(52), Gravity.LEFT or Gravity.CENTER_VERTICAL).apply { leftMargin = dp(24) })
 
         hudText = TextView(this); hudText.setTextColor(Color.WHITE); hudText.textSize = 18f; hudText.typeface = Typeface.DEFAULT_BOLD; hudText.gravity = Gravity.CENTER
         hudText.setPadding(dp(20), dp(10), dp(20), dp(10))
@@ -1204,17 +1241,19 @@ class MainActivity : AppCompatActivity() {
                     
                     if (dur != C.TIME_UNSET && dur > 0) {
                         seekBar.max = dur.toInt()
+                        // إصلاح التقديم: ننتقل للثانية المحفوظة بعد أن يصبح المشغل جاهزاً
                         val saved = prefs.position(v.id)
                         if (saved > 0 && saved < dur - 3000) {
                             exoPlayer.seekTo(saved)
+                            seekBar.progress = saved.toInt()
+                            timeText.text = fmt(saved) + " / " + fmt(dur)
                         }
                     }
                     if (speedIdx != 2) applySpeed()
                     
-                    // تأكيد التشغيل بمجرد أن يصبح جاهزاً
-                    if (exoPlayer.playWhenReady) {
-                        exoPlayer.play()
-                    }
+                    // التشغيل التلقائي الفوري بمجرد الجاهزية
+                    exoPlayer.play()
+                    
                 } else if (playbackState == Player.STATE_ENDED) {
                     val dur = exoPlayer.duration
                     if (dur != C.TIME_UNSET && dur > 0) {
@@ -1239,11 +1278,9 @@ class MainActivity : AppCompatActivity() {
         exoPlayer.setMediaItem(mediaItem)
         exoPlayer.setVideoSurfaceView(surfaceView)
         
-        // إجبار المشغل على الاستعداد للتشغيل
         exoPlayer.playWhenReady = true
-        
         exoPlayer.prepare()
-        exoPlayer.play() // تأكيد إضافي للتشغيل التلقائي
+        // لا نستدعي play() هنا، بل ننتظر STATE_READY لضمان التقديم والتشغيل بالترتيب الصحيح
     }
 
     private fun toggleFullscreen() {
