@@ -206,8 +206,6 @@ class MainActivity : AppCompatActivity() {
     private val navRefs = ArrayList<NavRef>()
     private val animatedIds = HashSet<Long>()
 
-    private val avatarColors = intArrayOf(Color.parseColor("#E53935"), Color.parseColor("#8E24AA"), Color.parseColor("#3949AB"), Color.parseColor("#00897B"), Color.parseColor("#F4511E"), Color.parseColor("#6D4C41"))
-
     private val pool = Executors.newFixedThreadPool(3)
     private val ui = Handler(Looper.getMainLooper())
 
@@ -250,7 +248,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var rootFrame: FrameLayout
     private lateinit var playerRoot: FrameLayout
-    private lateinit var aspectLayout: AspectRatioFrameLayout // الحاوية المسؤولة عن ملاءمة الفيديو
+    private lateinit var aspectLayout: AspectRatioFrameLayout
     private lateinit var surfaceView: SurfaceView
     private lateinit var controls: LinearLayout
     private lateinit var topBar: LinearLayout
@@ -827,7 +825,7 @@ class MainActivity : AppCompatActivity() {
         val w = screenW() - dp(24); val th = w * 9 / 16
         val box = LinearLayout(this); box.orientation = LinearLayout.VERTICAL
         
-        // 1. تقليل المسافات بين الفيديوهات لتصبح متقاربة جداً
+        // تقليل المسافات بين الفيديوهات
         box.setPadding(dp(12), dp(2), dp(12), dp(2))
         
         val card = LinearLayout(this); card.orientation = LinearLayout.VERTICAL; card.setPadding(0, 0, 0, dp(6))
@@ -839,36 +837,59 @@ class MainActivity : AppCompatActivity() {
         card.addView(thumbFrame(v, w, th), LinearLayout.LayoutParams(w, th))
 
         val row = LinearLayout(this); row.orientation = LinearLayout.HORIZONTAL; row.gravity = Gravity.CENTER_VERTICAL
-        row.setPadding(dp(10), dp(6), dp(6), dp(6))
+        row.setPadding(dp(12), dp(8), dp(8), dp(8)) // مساحات مريحة للعين
         
-        val avatar = TextView(this)
-        val letter = v.title.trim().firstOrNull()?.toString()?.uppercase() ?: "V"
-        avatar.text = letter; avatar.setTextColor(Color.WHITE); avatar.textSize = 14f; avatar.typeface = Typeface.DEFAULT_BOLD; avatar.gravity = Gravity.CENTER
-        val aShape = GradientDrawable(); aShape.shape = GradientDrawable.OVAL; aShape.setColor(avatarColors[Math.abs(v.title.hashCode()) % avatarColors.size])
-        avatar.background = aShape; avatar.elevation = dp(2).toFloat()
-        val alp = LinearLayout.LayoutParams(dp(32), dp(32)); alp.marginEnd = dp(10); row.addView(avatar, alp)
-
+        // إزالة الدائرة (Avatar) ووضع النص مباشرة
         val col = LinearLayout(this); col.orientation = LinearLayout.VERTICAL
-        
-        // 2. إزالة كلمة "فيديو" وتكبير الخط قليلاً
         val title = TextView(this); title.text = v.title; title.setTextColor(Color.WHITE); title.textSize = 15f; title.maxLines = 2; title.ellipsize = android.text.TextUtils.TruncateAt.END
         col.addView(title)
-        
         row.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
 
-        val trash = ImageView(this); trash.scaleType = ImageView.ScaleType.FIT_CENTER; trash.setImageDrawable(IconDrawable(IconDrawable.TRASH, Color.WHITE))
-        trash.setPadding(dp(8), dp(6), dp(8), dp(10)); trash.isFocusable = false; trash.contentDescription = "حذف"
-        trash.setOnClickListener { confirmDelete(v) }; make3D(trash, Color.parseColor("#C62828"), Color.parseColor("#7F0000"), 12)
-        row.addView(trash, LinearLayout.LayoutParams(dp(32), dp(34)).apply { setMargins(dp(4), 0, dp(4), dp(2)) })
-
-        val dots = TextView(this); dots.text = "•••"; dots.setTextColor(Color.WHITE); dots.textSize = 14f; dots.gravity = Gravity.CENTER
-        dots.setPadding(dp(10), dp(4), dp(10), dp(8)); dots.isFocusable = false; dots.contentDescription = "خيارات"
-        dots.setOnClickListener {
-            val pm = PopupMenu(this, dots); pm.menu.add(0, 1, 0, "إعادة المشاهدة من البداية")
-            pm.setOnMenuItemClickListener { prefs.resetProgress(v.id); refresh(); true }; pm.show()
+        // زر الحذف الأكثر احترافية (أصغر، بخلفية دائرية شفافة، وبدون تأثير 3D ثقيل)
+        val trash = ImageView(this)
+        trash.scaleType = ImageView.ScaleType.FIT_CENTER
+        trash.setImageDrawable(IconDrawable(IconDrawable.TRASH, Color.parseColor("#EEEEEE")))
+        trash.setPadding(dp(8), dp(8), dp(8), dp(8))
+        trash.isFocusable = false
+        trash.contentDescription = "حذف"
+        trash.setOnClickListener { confirmDelete(v) }
+        
+        val trashBg = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(Color.parseColor("#1AFFFFFF")) // لون أبيض شفاف خفيف جداً
         }
-        make3D(dots, Color.parseColor("#3A3A3A"), Color.parseColor("#1C1C1C"), 12)
-        row.addView(dots, LinearLayout.LayoutParams(-2, -2).apply { setMargins(dp(4), 0, dp(8), dp(2)) })
+        trash.background = trashBg
+        
+        row.addView(trash, LinearLayout.LayoutParams(dp(32), dp(32)).apply {
+            setMargins(dp(8), 0, dp(4), 0)
+        })
+
+        // زر الخيارات (•••) بنفس الستايل الأنيق
+        val dots = TextView(this)
+        dots.text = "•••"
+        dots.setTextColor(Color.WHITE)
+        dots.textSize = 14f
+        dots.gravity = Gravity.CENTER
+        dots.setPadding(dp(8), dp(4), dp(8), dp(8))
+        dots.isFocusable = false
+        dots.contentDescription = "خيارات"
+        dots.setOnClickListener {
+            val pm = PopupMenu(this, dots)
+            pm.menu.add(0, 1, 0, "إعادة المشاهدة من البداية")
+            pm.setOnMenuItemClickListener { prefs.resetProgress(v.id); refresh(); true }
+            pm.show()
+        }
+        
+        val dotsBg = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(Color.parseColor("#1AFFFFFF"))
+        }
+        dots.background = dotsBg
+        
+        row.addView(dots, LinearLayout.LayoutParams(dp(32), dp(32)).apply {
+            setMargins(dp(4), 0, 0, 0)
+        })
+
         card.addView(row); applyFont(box)
 
         if (animatedIds.add(v.id)) { box.alpha = 0f; box.translationY = dp(24).toFloat(); box.animate().alpha(1f).translationY(0f).setDuration(280).setInterpolator(DecelerateInterpolator()).start() }
@@ -968,9 +989,8 @@ class MainActivity : AppCompatActivity() {
     private fun buildPlayer() {
         playerRoot = FrameLayout(this); playerRoot.setBackgroundColor(Color.BLACK); playerRoot.isClickable = true
         
-        // 3. استخدام AspectRatioFrameLayout لضمان عدم قص الفيديو في الشاشة المسطحة
         aspectLayout = AspectRatioFrameLayout(this)
-        aspectLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT // يحافظ على الصورة كاملة
+        aspectLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT 
         
         surfaceView = SurfaceView(this)
         surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
@@ -983,7 +1003,6 @@ class MainActivity : AppCompatActivity() {
             }
         })
         
-        // إضافة الفيديو داخل الحاوية المسؤولة عن الأبعاد
         aspectLayout.addView(surfaceView, FrameLayout.LayoutParams(-1, -1))
         playerRoot.addView(aspectLayout, FrameLayout.LayoutParams(-1, -1))
 
@@ -1054,8 +1073,6 @@ class MainActivity : AppCompatActivity() {
         if (Build.VERSION.SDK_INT >= 26 && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
             btnRow.addView(iconBtn(IconDrawable.PIP) { enterPip() }, btnLp())
         }
-        
-        // زر التكبير والتصغير (يبدل بين ملء الشاشة بالقص أو العرض الكامل)
         btnRow.addView(iconBtn(IconDrawable.EXPAND) { 
             if (aspectLayout.resizeMode == AspectRatioFrameLayout.RESIZE_MODE_FIT) {
                 aspectLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
@@ -1065,7 +1082,6 @@ class MainActivity : AppCompatActivity() {
                 showHud("عرض كامل الفيديو")
             }
         }, btnLp())
-        
         btnRow.addView(iconBtn(IconDrawable.ROTATE) { toggleFullscreen() }, btnLp())
         controls.addView(btnRow, LinearLayout.LayoutParams(-1, -2))
         playerRoot.addView(controls, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
@@ -1153,7 +1169,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun openPlayer(v: VideoItem) {
         releasePlayer(); current = v; videoW = 0; videoH = 0; locked = false; speedIdx = 2; speedBtn.text = "1x"
-        aspectLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT // دائماً نبدأ بالعرض الكامل
+        aspectLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
         unlockBtn.visibility = View.GONE; hudText.visibility = View.GONE; playerTitle.text = v.title; setPlayIcon(true); seekBar.progress = 0
         controls.visibility = View.VISIBLE; topBar.visibility = View.VISIBLE; playerRoot.visibility = View.VISIBLE; hideSystemBars(true)
         if (surfaceView.holder.surface.isValid) { startPlayback(v) } else { pending = v }
@@ -1204,7 +1220,6 @@ class MainActivity : AppCompatActivity() {
         exoPlayer.setVideoSurfaceView(surfaceView)
         exoPlayer.prepare()
         
-        // 4. إجبار التشغيل التلقائي
         exoPlayer.playWhenReady = true
         exoPlayer.play()
     }
