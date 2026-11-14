@@ -76,6 +76,7 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
@@ -288,18 +289,19 @@ class MainActivity : AppCompatActivity() {
                 try {
                     val pos = p.currentPosition
                     val dur = p.duration
-                    if (!userSeeking && dur > 0) { 
-                        seekBar.max = dur.toInt()
-                        seekBar.progress = pos.toInt() 
-                    }
-                    if (dur > 0) {
-                        timeText.text = fmt(pos) + " / " + fmt(dur)
-                    }
                     
-                    val now = System.currentTimeMillis()
-                    if (now - lastSaveTime > 5000) {
-                        current?.let { prefs.savePosition(it.id, pos, dur) }
-                        lastSaveTime = now
+                    if (dur != C.TIME_UNSET && dur > 0) {
+                        if (!userSeeking) { 
+                            seekBar.max = dur.toInt()
+                            seekBar.progress = pos.toInt() 
+                        }
+                        timeText.text = fmt(pos) + " / " + fmt(dur)
+                        
+                        val now = System.currentTimeMillis()
+                        if (now - lastSaveTime > 5000) {
+                            current?.let { prefs.savePosition(it.id, pos, dur) }
+                            lastSaveTime = now
+                        }
                     }
                 } catch (_: Exception) {}
             }
@@ -446,7 +448,12 @@ class MainActivity : AppCompatActivity() {
         current?.let { c ->
             outState.putLong("current_id", c.id)
             val p = player
-            if (p != null && prepared) { try { prefs.savePosition(c.id, p.currentPosition, p.duration) } catch (_: Exception) {} }
+            if (p != null && prepared) { 
+                val dur = p.duration
+                if (dur != C.TIME_UNSET && dur > 0) {
+                    try { prefs.savePosition(c.id, p.currentPosition, dur) } catch (_: Exception) {} 
+                }
+            }
         }
     }
 
@@ -825,7 +832,6 @@ class MainActivity : AppCompatActivity() {
         val w = screenW() - dp(24); val th = w * 9 / 16
         val box = LinearLayout(this); box.orientation = LinearLayout.VERTICAL
         
-        // تقليل المسافات بين الفيديوهات
         box.setPadding(dp(12), dp(2), dp(12), dp(2))
         
         val card = LinearLayout(this); card.orientation = LinearLayout.VERTICAL; card.setPadding(0, 0, 0, dp(6))
@@ -837,15 +843,13 @@ class MainActivity : AppCompatActivity() {
         card.addView(thumbFrame(v, w, th), LinearLayout.LayoutParams(w, th))
 
         val row = LinearLayout(this); row.orientation = LinearLayout.HORIZONTAL; row.gravity = Gravity.CENTER_VERTICAL
-        row.setPadding(dp(12), dp(8), dp(8), dp(8)) // مساحات مريحة للعين
+        row.setPadding(dp(12), dp(8), dp(8), dp(8)) 
         
-        // إزالة الدائرة (Avatar) ووضع النص مباشرة
         val col = LinearLayout(this); col.orientation = LinearLayout.VERTICAL
         val title = TextView(this); title.text = v.title; title.setTextColor(Color.WHITE); title.textSize = 15f; title.maxLines = 2; title.ellipsize = android.text.TextUtils.TruncateAt.END
         col.addView(title)
         row.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
 
-        // زر الحذف الأكثر احترافية (أصغر، بخلفية دائرية شفافة، وبدون تأثير 3D ثقيل)
         val trash = ImageView(this)
         trash.scaleType = ImageView.ScaleType.FIT_CENTER
         trash.setImageDrawable(IconDrawable(IconDrawable.TRASH, Color.parseColor("#EEEEEE")))
@@ -856,7 +860,7 @@ class MainActivity : AppCompatActivity() {
         
         val trashBg = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
-            setColor(Color.parseColor("#1AFFFFFF")) // لون أبيض شفاف خفيف جداً
+            setColor(Color.parseColor("#1AFFFFFF"))
         }
         trash.background = trashBg
         
@@ -864,7 +868,6 @@ class MainActivity : AppCompatActivity() {
             setMargins(dp(8), 0, dp(4), 0)
         })
 
-        // زر الخيارات (•••) بنفس الستايل الأنيق
         val dots = TextView(this)
         dots.text = "•••"
         dots.setTextColor(Color.WHITE)
@@ -1114,9 +1117,12 @@ class MainActivity : AppCompatActivity() {
     private fun seekBy(delta: Int) {
         val p = player ?: return; if (!prepared) return
         try {
-            val t = (p.currentPosition + delta).coerceIn(0, p.duration)
-            p.seekTo(t)
-            seekBar.progress = t.toInt()
+            val dur = p.duration
+            if (dur != C.TIME_UNSET && dur > 0) {
+                val t = (p.currentPosition + delta).coerceIn(0, dur)
+                p.seekTo(t)
+                seekBar.progress = t.toInt()
+            }
         } catch (_: Exception) {}
     }
 
@@ -1194,13 +1200,27 @@ class MainActivity : AppCompatActivity() {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_READY) {
                     prepared = true
-                    seekBar.max = exoPlayer.duration.toInt()
-                    val saved = prefs.position(v.id)
-                    if (saved > 0 && saved < exoPlayer.duration - 3000) exoPlayer.seekTo(saved)
+                    val dur = exoPlayer.duration
+                    
+                    if (dur != C.TIME_UNSET && dur > 0) {
+                        seekBar.max = dur.toInt()
+                        val saved = prefs.position(v.id)
+                        if (saved > 0 && saved < dur - 3000) {
+                            exoPlayer.seekTo(saved)
+                        }
+                    }
                     if (speedIdx != 2) applySpeed()
+                    
+                    // تأكيد التشغيل بمجرد أن يصبح جاهزاً
+                    if (exoPlayer.playWhenReady) {
+                        exoPlayer.play()
+                    }
                 } else if (playbackState == Player.STATE_ENDED) {
-                    prefs.savePosition(v.id, 0L, exoPlayer.duration)
-                    prefs.markWatched(v.id)
+                    val dur = exoPlayer.duration
+                    if (dur != C.TIME_UNSET && dur > 0) {
+                        prefs.savePosition(v.id, 0L, dur)
+                        prefs.markWatched(v.id)
+                    }
                     setPlayIcon(false)
                 }
             }
@@ -1218,10 +1238,12 @@ class MainActivity : AppCompatActivity() {
         val mediaItem = MediaItem.fromUri(v.uri)
         exoPlayer.setMediaItem(mediaItem)
         exoPlayer.setVideoSurfaceView(surfaceView)
-        exoPlayer.prepare()
         
+        // إجبار المشغل على الاستعداد للتشغيل
         exoPlayer.playWhenReady = true
-        exoPlayer.play()
+        
+        exoPlayer.prepare()
+        exoPlayer.play() // تأكيد إضافي للتشغيل التلقائي
     }
 
     private fun toggleFullscreen() {
@@ -1239,7 +1261,10 @@ class MainActivity : AppCompatActivity() {
     private fun closePlayer() {
         val p = player; val c = current
         if (p != null && c != null && prepared) { 
-            try { prefs.savePosition(c.id, p.currentPosition, p.duration) } catch (_: Exception) {} 
+            val dur = p.duration
+            if (dur != C.TIME_UNSET && dur > 0) {
+                try { prefs.savePosition(c.id, p.currentPosition, dur) } catch (_: Exception) {} 
+            }
         }
         releasePlayer(); current = null; pending = null; videoW = 0; videoH = 0; locked = false; speedIdx = 2
         ui.removeCallbacks(hideHud); ui.removeCallbacks(hideUnlock); hudText.visibility = View.GONE; unlockBtn.visibility = View.GONE
@@ -1287,6 +1312,8 @@ class MainActivity : AppCompatActivity() {
         fun lastTouched(id: Long): Long = sp.getLong("t_$id", 0L)
 
         fun savePosition(id: Long, position: Long, duration: Long) {
+            if (duration <= 0) return
+            
             val e = sp.edit().putLong("p_$id", position).putLong("d_$id", duration)
             if (duration > 0 && position >= duration - 3000) e.putBoolean("w_$id", true)
             else if (position > 3000) { e.putBoolean("w_$id", false); e.putLong("t_$id", System.currentTimeMillis()) }
