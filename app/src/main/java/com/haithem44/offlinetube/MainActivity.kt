@@ -1,5 +1,3 @@
-@file:androidx.media3.common.util.UnstableApi
-
 package com.haithem44.offlinetube
 
 import android.Manifest
@@ -263,7 +261,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var gestures: GestureDetector
     private val pauseDrawable = IconDrawable(IconDrawable.PAUSE, Color.WHITE)
     private val playDrawable = IconDrawable(IconDrawable.PLAY_FILLED, Color.WHITE)
-    
+
     private var player: ExoPlayer? = null
     private var prepared = false
     private var current: VideoItem? = null
@@ -282,6 +280,16 @@ class MainActivity : AppCompatActivity() {
     private val hideHud = Runnable { hudText.visibility = View.GONE }
     private val hideUnlock = Runnable { if (locked) unlockBtn.visibility = View.GONE }
 
+    // حفظ موضع المشاهدة: إذا انتهى الفيديو نحفظ 0 بدل النهاية
+    private fun saveProgress(p: ExoPlayer, c: VideoItem) {
+        try {
+            val dur = p.duration
+            if (dur == C.TIME_UNSET || dur <= 0) return
+            val pos = if (p.playbackState == Player.STATE_ENDED) 0L else p.currentPosition
+            prefs.savePosition(c.id, pos, dur)
+        } catch (_: Exception) {}
+    }
+
     private val ticker = object : Runnable {
         override fun run() {
             val p = player
@@ -289,17 +297,17 @@ class MainActivity : AppCompatActivity() {
                 try {
                     val pos = p.currentPosition
                     val dur = p.duration
-                    
+
                     if (dur != C.TIME_UNSET && dur > 0) {
-                        if (!userSeeking) { 
+                        if (!userSeeking) {
                             seekBar.max = dur.toInt()
-                            seekBar.progress = pos.toInt() 
+                            seekBar.progress = pos.toInt()
                         }
                         timeText.text = fmt(pos) + " / " + fmt(dur)
-                        
+
                         val now = System.currentTimeMillis()
                         if (now - lastSaveTime > 5000) {
-                            current?.let { prefs.savePosition(it.id, pos, dur) }
+                            current?.let { saveProgress(p, it) }
                             lastSaveTime = now
                         }
                     }
@@ -448,11 +456,8 @@ class MainActivity : AppCompatActivity() {
         current?.let { c ->
             outState.putLong("current_id", c.id)
             val p = player
-            if (p != null && prepared) { 
-                val dur = p.duration
-                if (dur != C.TIME_UNSET && dur > 0) {
-                    try { prefs.savePosition(c.id, p.currentPosition, dur) } catch (_: Exception) {} 
-                }
+            if (p != null && prepared) {
+                saveProgress(p, c)
             }
         }
     }
@@ -517,14 +522,14 @@ class MainActivity : AppCompatActivity() {
         b.scaleType = ImageView.ScaleType.FIT_CENTER
         b.setImageDrawable(IconDrawable(kind, Color.WHITE))
         b.setPadding(dp(12), dp(12), dp(12), dp(12))
-        
+
         val bg = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
             setColor(bgColor)
         }
         b.background = bg
         b.setOnClickListener { onClick() }
-        
+
         b.setOnTouchListener { view, e ->
             when (e.action) {
                 MotionEvent.ACTION_DOWN -> view.animate().scaleX(0.85f).scaleY(0.85f).setDuration(100).start()
@@ -846,20 +851,20 @@ class MainActivity : AppCompatActivity() {
     private fun videoItemView(v: VideoItem): View {
         val w = screenW() - dp(24); val th = w * 9 / 16
         val box = LinearLayout(this); box.orientation = LinearLayout.VERTICAL
-        
+
         box.setPadding(dp(12), dp(2), dp(12), dp(2))
-        
+
         val card = LinearLayout(this); card.orientation = LinearLayout.VERTICAL; card.setPadding(0, 0, 0, dp(6))
         setBgKeepPad(card, raised(Color.parseColor("#2B2B2B"), Color.parseColor("#181818"), 18))
         card.elevation = dp(3).toFloat(); card.clipToOutline = true
         card.outlineProvider = object : ViewOutlineProvider() { override fun getOutline(view: View, o: Outline) { o.setRoundRect(0, 0, view.width, view.height, dp(18).toFloat()) } }
         box.addView(card, LinearLayout.LayoutParams(-1, -2))
-        
+
         card.addView(thumbFrame(v, w, th), LinearLayout.LayoutParams(w, th))
 
         val row = LinearLayout(this); row.orientation = LinearLayout.HORIZONTAL; row.gravity = Gravity.CENTER_VERTICAL
-        row.setPadding(dp(12), dp(8), dp(8), dp(8)) 
-        
+        row.setPadding(dp(12), dp(8), dp(8), dp(8))
+
         val col = LinearLayout(this); col.orientation = LinearLayout.VERTICAL
         val title = TextView(this); title.text = v.title; title.setTextColor(Color.WHITE); title.textSize = 15f; title.maxLines = 2; title.ellipsize = android.text.TextUtils.TruncateAt.END
         col.addView(title)
@@ -872,13 +877,13 @@ class MainActivity : AppCompatActivity() {
         trash.isFocusable = false
         trash.contentDescription = "حذف"
         trash.setOnClickListener { confirmDelete(v) }
-        
+
         val trashBg = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
             setColor(Color.parseColor("#1AFFFFFF"))
         }
         trash.background = trashBg
-        
+
         row.addView(trash, LinearLayout.LayoutParams(dp(32), dp(32)).apply {
             setMargins(dp(8), 0, dp(4), 0)
         })
@@ -897,13 +902,13 @@ class MainActivity : AppCompatActivity() {
             pm.setOnMenuItemClickListener { prefs.resetProgress(v.id); refresh(); true }
             pm.show()
         }
-        
+
         val dotsBg = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
             setColor(Color.parseColor("#1AFFFFFF"))
         }
         dots.background = dotsBg
-        
+
         row.addView(dots, LinearLayout.LayoutParams(dp(32), dp(32)).apply {
             setMargins(dp(4), 0, 0, 0)
         })
@@ -918,11 +923,11 @@ class MainActivity : AppCompatActivity() {
         val f = FrameLayout(this); f.setBackgroundColor(Color.parseColor("#222222")); f.layoutParams = ViewGroup.LayoutParams(w, h)
         val shimmer = ShimmerView(this); f.addView(shimmer, FrameLayout.LayoutParams(-1, -1))
         val iv = ImageView(this); iv.scaleType = ImageView.ScaleType.CENTER_CROP; f.addView(iv, FrameLayout.LayoutParams(-1, -1)); loadThumb(v, iv, shimmer)
-        
+
         val badge = TextView(this)
         badge.text = fmt(v.duration)
         badge.setTextColor(Color.WHITE)
-        badge.textSize = 11f 
+        badge.textSize = 11f
         badge.typeface = Typeface.DEFAULT_BOLD
         badge.layoutDirection = View.LAYOUT_DIRECTION_LTR
         val bShape = GradientDrawable()
@@ -930,11 +935,11 @@ class MainActivity : AppCompatActivity() {
         bShape.cornerRadius = dp(4).toFloat()
         badge.background = bShape
         badge.setPadding(dp(5), dp(1), dp(5), dp(1))
-        f.addView(badge, FrameLayout.LayoutParams(-2, -2, Gravity.LEFT or Gravity.BOTTOM).apply { 
+        f.addView(badge, FrameLayout.LayoutParams(-2, -2, Gravity.LEFT or Gravity.BOTTOM).apply {
             leftMargin = dp(8)
-            bottomMargin = dp(8) 
+            bottomMargin = dp(8)
         })
-        
+
         val pos = prefs.position(v.id); val dur = if (v.duration > 0) v.duration else prefs.duration(v.id)
         if (pos > 0 && dur > 0) {
             val frac = (pos.toFloat() / dur.toFloat()).coerceIn(0f, 1f)
@@ -976,14 +981,14 @@ class MainActivity : AppCompatActivity() {
         val r = MediaMetadataRetriever()
         try {
             r.setDataSource(this, v.uri)
-            
-            var frame = r.getFrameAtTime(1000000, MediaMetadataRetriever.OPTION_CLOSEST) 
+
+            var frame = r.getFrameAtTime(1000000, MediaMetadataRetriever.OPTION_CLOSEST)
                 ?: r.getFrameAtTime(-1)
-            
+
             if (frame != null) {
                 val targetW = thumbW
                 val targetH = (frame.height.toFloat() / frame.width * targetW).toInt()
-                
+
                 if (frame.width > targetW) {
                     val scaled = Bitmap.createScaledBitmap(frame, targetW, targetH, true)
                     if (scaled != frame) frame.recycle()
@@ -992,7 +997,7 @@ class MainActivity : AppCompatActivity() {
                 return frame
             }
         } catch (_: Throwable) {} finally { try { r.release() } catch (_: Exception) {} }
-        
+
         return try {
             if (Build.VERSION.SDK_INT >= 29) contentResolver.loadThumbnail(v.uri, Size(thumbW, thumbH), null)
             else {
@@ -1006,21 +1011,27 @@ class MainActivity : AppCompatActivity() {
 
     private fun buildPlayer() {
         playerRoot = FrameLayout(this); playerRoot.setBackgroundColor(Color.BLACK); playerRoot.isClickable = true
-        
+
         aspectLayout = AspectRatioFrameLayout(this)
-        aspectLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT 
-        
+        aspectLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+
         surfaceView = SurfaceView(this)
         surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
-            override fun surfaceCreated(h: SurfaceHolder) { 
+            override fun surfaceCreated(h: SurfaceHolder) {
                 player?.setVideoSurfaceView(surfaceView)
+                // إصلاح: إذا كان هناك فيديو ينتظر جاهزية السطح، نبدأه الآن
+                val waiting = pending
+                if (waiting != null && player == null) {
+                    pending = null
+                    startPlayback(waiting)
+                }
             }
             override fun surfaceChanged(h: SurfaceHolder, f: Int, w: Int, hh: Int) {}
-            override fun surfaceDestroyed(h: SurfaceHolder) { 
-                player?.clearVideoSurfaceView(surfaceView) 
+            override fun surfaceDestroyed(h: SurfaceHolder) {
+                player?.clearVideoSurfaceView(surfaceView)
             }
         })
-        
+
         aspectLayout.addView(surfaceView, FrameLayout.LayoutParams(-1, -1))
         playerRoot.addView(aspectLayout, FrameLayout.LayoutParams(-1, -1))
 
@@ -1040,7 +1051,7 @@ class MainActivity : AppCompatActivity() {
                 return true
             }
         })
-        
+
         val gestureOverlay = View(this)
         gestureOverlay.setOnTouchListener { _, e -> gestures.onTouchEvent(e); true }
         playerRoot.addView(gestureOverlay, FrameLayout.LayoutParams(-1, -1))
@@ -1067,14 +1078,22 @@ class MainActivity : AppCompatActivity() {
         seekRow.addView(timeText); controls.addView(seekRow, LinearLayout.LayoutParams(-1, -2))
 
         val btnRow = LinearLayout(this); btnRow.orientation = LinearLayout.HORIZONTAL; btnRow.gravity = Gravity.CENTER
-        
+
         // زر التشغيل (بلون أحمر وأيقونة بيضاء)
         playPause = makePlayerBtn(IconDrawable.PAUSE, Color.parseColor("#FF0000")) {
             try {
                 val p = player
-                if (p != null && prepared) { 
-                    if (p.isPlaying) { p.pause(); setPlayIcon(false) } 
-                    else { p.play(); setPlayIcon(true) } 
+                if (p != null && prepared) {
+                    if (p.isPlaying) {
+                        p.pause(); setPlayIcon(false)
+                    } else {
+                        // إصلاح: بعد انتهاء الفيديو نعيده للبداية ثم نشغله
+                        if (p.playbackState == Player.STATE_ENDED) {
+                            p.seekTo(0L)
+                            seekBar.progress = 0
+                        }
+                        p.play(); setPlayIcon(true)
+                    }
                 } else {
                     current?.let { startPlayback(it) }
                 }
@@ -1110,8 +1129,8 @@ class MainActivity : AppCompatActivity() {
         if (Build.VERSION.SDK_INT >= 26 && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
             btnRow.addView(makePlayerBtn(IconDrawable.PIP) { enterPip() }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { setMargins(dp(5), 0, dp(5), 0) })
         }
-        
-        btnRow.addView(makePlayerBtn(IconDrawable.EXPAND) { 
+
+        btnRow.addView(makePlayerBtn(IconDrawable.EXPAND) {
             if (aspectLayout.resizeMode == AspectRatioFrameLayout.RESIZE_MODE_FIT) {
                 aspectLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                 showHud("ملء الشاشة (قص)")
@@ -1120,9 +1139,9 @@ class MainActivity : AppCompatActivity() {
                 showHud("عرض كامل الفيديو")
             }
         }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { setMargins(dp(5), 0, dp(5), 0) })
-        
+
         btnRow.addView(makePlayerBtn(IconDrawable.ROTATE) { toggleFullscreen() }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { setMargins(dp(5), 0, dp(5), 0) })
-        
+
         controls.addView(btnRow, LinearLayout.LayoutParams(-1, -2))
         playerRoot.addView(controls, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
 
@@ -1215,22 +1234,22 @@ class MainActivity : AppCompatActivity() {
         aspectLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
         unlockBtn.visibility = View.GONE; hudText.visibility = View.GONE; playerTitle.text = v.title; setPlayIcon(true); seekBar.progress = 0
         controls.visibility = View.VISIBLE; topBar.visibility = View.VISIBLE; playerRoot.visibility = View.VISIBLE; hideSystemBars(true)
-        if (surfaceView.holder.surface.isValid) { startPlayback(v) } else { pending = v }
+        if (surfaceView.holder.surface.isValid) { pending = null; startPlayback(v) } else { pending = v }
     }
 
     private fun startPlayback(v: VideoItem) {
         releasePlayer()
-        
+
         val exoPlayer = ExoPlayer.Builder(this@MainActivity).build()
         player = exoPlayer
-        
+
         exoPlayer.addListener(object : Player.Listener {
             override fun onVideoSizeChanged(videoSize: VideoSize) {
                 videoW = videoSize.width
                 videoH = videoSize.height
-                if (videoW > videoH && !isLandscape) { 
+                if (videoW > videoH && !isLandscape) {
                     isLandscape = true
-                    requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE 
+                    requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                 }
             }
 
@@ -1238,27 +1257,20 @@ class MainActivity : AppCompatActivity() {
                 if (playbackState == Player.STATE_READY) {
                     prepared = true
                     val dur = exoPlayer.duration
-                    
                     if (dur != C.TIME_UNSET && dur > 0) {
                         seekBar.max = dur.toInt()
-                        // إصلاح التقديم: ننتقل للثانية المحفوظة بعد أن يصبح المشغل جاهزاً
-                        val saved = prefs.position(v.id)
-                        if (saved > 0 && saved < dur - 3000) {
-                            exoPlayer.seekTo(saved)
-                            seekBar.progress = saved.toInt()
-                            timeText.text = fmt(saved) + " / " + fmt(dur)
-                        }
                     }
                     if (speedIdx != 2) applySpeed()
-                    
-                    // التشغيل التلقائي الفوري بمجرد الجاهزية
-                    exoPlayer.play()
-                    
+                    // ملاحظة: موضع الاستئناف يُحدَّد قبل prepare() ولا نقفز مرة أخرى هنا،
+                    // لأن STATE_READY يتكرر بعد كل تقديم/تأخير وكان يرجع الفيديو للموضع القديم.
                 } else if (playbackState == Player.STATE_ENDED) {
+                    prepared = true
                     val dur = exoPlayer.duration
                     if (dur != C.TIME_UNSET && dur > 0) {
                         prefs.savePosition(v.id, 0L, dur)
                         prefs.markWatched(v.id)
+                        seekBar.max = dur.toInt()
+                        seekBar.progress = dur.toInt()
                     }
                     setPlayIcon(false)
                 }
@@ -1274,13 +1286,17 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
+        // موضع الاستئناف: نحدده قبل التحضير مرة واحدة فقط
+        val saved = prefs.position(v.id)
+        val knownDur = if (v.duration > 0) v.duration else prefs.duration(v.id)
+        val startPos = if (saved > 0 && (knownDur <= 0 || saved < knownDur - 3000)) saved else 0L
+
         val mediaItem = MediaItem.fromUri(v.uri)
-        exoPlayer.setMediaItem(mediaItem)
+        exoPlayer.setMediaItem(mediaItem, startPos)
         exoPlayer.setVideoSurfaceView(surfaceView)
-        
+
         exoPlayer.playWhenReady = true
         exoPlayer.prepare()
-        // لا نستدعي play() هنا، بل ننتظر STATE_READY لضمان التقديم والتشغيل بالترتيب الصحيح
     }
 
     private fun toggleFullscreen() {
@@ -1297,11 +1313,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun closePlayer() {
         val p = player; val c = current
-        if (p != null && c != null && prepared) { 
-            val dur = p.duration
-            if (dur != C.TIME_UNSET && dur > 0) {
-                try { prefs.savePosition(c.id, p.currentPosition, dur) } catch (_: Exception) {} 
-            }
+        if (p != null && c != null && prepared) {
+            saveProgress(p, c)
         }
         releasePlayer(); current = null; pending = null; videoW = 0; videoH = 0; locked = false; speedIdx = 2
         ui.removeCallbacks(hideHud); ui.removeCallbacks(hideUnlock); hudText.visibility = View.GONE; unlockBtn.visibility = View.GONE
@@ -1330,7 +1343,7 @@ class MainActivity : AppCompatActivity() {
 
     class Prefs(ctx: Context) {
         private val sp: SharedPreferences = ctx.getSharedPreferences("offlinetube", Context.MODE_PRIVATE)
-        
+
         var folderPath: String
             get() = sp.getString("folder_path", "") ?: ""
             set(v) {
@@ -1350,7 +1363,7 @@ class MainActivity : AppCompatActivity() {
 
         fun savePosition(id: Long, position: Long, duration: Long) {
             if (duration <= 0) return
-            
+
             val e = sp.edit().putLong("p_$id", position).putLong("d_$id", duration)
             if (duration > 0 && position >= duration - 3000) e.putBoolean("w_$id", true)
             else if (position > 3000) { e.putBoolean("w_$id", false); e.putLong("t_$id", System.currentTimeMillis()) }
@@ -1361,4 +1374,3 @@ class MainActivity : AppCompatActivity() {
         fun resetProgress(id: Long) = sp.edit().remove("p_$id").remove("w_$id").apply()
         fun clearVideo(id: Long) = sp.edit().remove("p_$id").remove("d_$id").remove("w_$id").remove("t_$id").apply()
     }
-}
