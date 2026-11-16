@@ -659,18 +659,11 @@ class MainActivity : AppCompatActivity() {
         row.addView(navItem(IconDrawable.SEARCH, "بحث", -1, { openSearch() }), navLp())
         row.addView(navItem(IconDrawable.PLAY, "تابع", 1, { selectTab(1) }), navLp())
         row.addView(navItem(IconDrawable.REFRESH, "تحديث", -1, { reloadVideos() }), navLp())
-        // زر المجلد: ضغطة = اختيار مجلد للفلترة، ضغطة مطولة = إلغاء الفلتر وعرض كل الفيديوهات
+        // زر المجلد: ضغطة عادية = اختيار/تغيير مجلد الفيديوهات
         row.addView(navItem(
             IconDrawable.FOLDER, "المجلد", -1,
             { pickFolder() },
-            {
-                if (folderPath.isNotEmpty()) {
-                    folderPath = ""; prefs.folderPath = ""; loadVideos()
-                    Toast.makeText(this@MainActivity, "عرض جميع فيديوهات الهاتف", Toast.LENGTH_SHORT).show()
-                } else {
-                    Toast.makeText(this@MainActivity, "اختر مجلداً للفلترة", Toast.LENGTH_SHORT).show()
-                }
-            }
+            { Toast.makeText(this@MainActivity, "اضغط ضغطة عادية لتغيير المجلد", Toast.LENGTH_SHORT).show() }
         ), navLp())
         bar.addView(row, LinearLayout.LayoutParams(-1, 0, 1f)); updateNavStyles(); return bar
     }
@@ -710,10 +703,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateEmptyState() {
         emptyText.text = when {
-            all.isEmpty() -> "لا توجد فيديوهات على الهاتف\nاسحب للأسفل للتحديث"
+            folderPath.isEmpty() -> "اضغط زر \"المجلد\" بالأسفل لاختيار مجلد الفيديوهات"
+            all.isEmpty() -> "لا توجد فيديوهات في المجلد المحدد\nاسحب للأسفل للتحديث أو غيّر المجلد"
             query.isNotEmpty() -> "لا توجد نتائج لـ \"$query\""
             tab == 3 -> "لم تشاهد أي فيديو بعد"
-            folderPath.isNotEmpty() -> "لا توجد فيديوهات في المجلد المحدد\nاضغط مطولاً على \"المجلد\" لعرض الكل"
             else -> "لا توجد فيديوهات"
         }
     }
@@ -803,8 +796,8 @@ class MainActivity : AppCompatActivity() {
         } catch (_: Exception) {}
     }
 
-    // ✅ الإصلاح: لم يعد يفرض اختيار مجلد — يقرأ من الهاتف مباشرة
-    private fun startLoad() { loadVideos() }
+    // إن لم يُختر مجلد بعد: يفتح اختيار المجلد مباشرة
+    private fun startLoad() { if (folderPath.isEmpty()) pickFolder() else loadVideos() }
 
     override fun onResume() {
         super.onResume()
@@ -813,16 +806,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * ✅ الدالة المُصحّحة: تضيف DATA و RELATIVE_PATH إلى الـ projection
-     *    - إذا كان folderPath فارغاً → يجلب كل فيديوهات الهاتف
-     *    - إذا كان folderPath محدداً → يفلتر على ذلك المجلد
+     * يقرأ الفيديوهات من المجلد المختار فقط.
+     * إذا لم يُختر مجلد → القائمة فارغة.
      */
     private fun loadVideos() {
         val folder = folderPath
         pool.execute {
+            if (folder.isEmpty()) {
+                ui.post { all.clear(); refresh(); finishRefresh() }
+                return@execute
+            }
             val list = ArrayList<VideoItem>()
 
-            // ✅ العمود المناسب حسب إصدار أندرويد
             val proj: Array<String> = if (Build.VERSION.SDK_INT >= 29) {
                 arrayOf(
                     MediaStore.Video.Media._ID,
@@ -856,28 +851,24 @@ class MainActivity : AppCompatActivity() {
 
                     val normFolder = folder.trimEnd('/')
                     val primaryBase = Environment.getExternalStorageDirectory().absolutePath.trimEnd('/')
-                    val primaryTarget: String? = if (folder.isNotEmpty() && normFolder.startsWith(primaryBase)) {
+                    val primaryTarget: String? = if (normFolder.startsWith(primaryBase)) {
                         normFolder.substring(primaryBase.length).trimStart('/')
                     } else null
 
                     while (c.moveToNext()) {
                         val id = c.getLong(iId)
+                        var inFolder = false
 
-                        // ✅ إذا لم يختر المستخدم مجلداً → اعرض كل الفيديوهات
-                        var inFolder = folder.isEmpty()
-
-                        if (!inFolder) {
-                            // أندرويد < 10: مطابقة عبر المسار الكامل DATA
-                            if (iData >= 0) {
-                                @Suppress("DEPRECATION")
-                                val data = c.getString(iData)
-                                if (data != null && (data == normFolder || data.startsWith("$normFolder/"))) inFolder = true
-                            }
-                            // أندرويد 10+: مطابقة عبر RELATIVE_PATH
-                            if (!inFolder && primaryTarget != null && iRel >= 0) {
-                                val rel = c.getString(iRel)?.trimEnd('/') ?: ""
-                                if (primaryTarget.isEmpty() || rel == primaryTarget || rel.startsWith("$primaryTarget/")) inFolder = true
-                            }
+                        // أندرويد < 10: مطابقة عبر المسار الكامل DATA
+                        if (iData >= 0) {
+                            @Suppress("DEPRECATION")
+                            val data = c.getString(iData)
+                            if (data != null && (data == normFolder || data.startsWith("$normFolder/"))) inFolder = true
+                        }
+                        // أندرويد 10+: مطابقة عبر RELATIVE_PATH
+                        if (!inFolder && primaryTarget != null && iRel >= 0) {
+                            val rel = c.getString(iRel)?.trimEnd('/') ?: ""
+                            if (primaryTarget.isEmpty() || rel == primaryTarget || rel.startsWith("$primaryTarget/")) inFolder = true
                         }
 
                         if (!inFolder) continue
@@ -897,7 +888,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ✅ لم يعد يفرض اختيار مجلد عند التحديث
     private fun reloadVideos() {
         if (refreshing) return
         refreshing = true; refreshBar.text = "↻ جارٍ التحديث..."; refreshBar.visibility = View.VISIBLE; loadVideos()
