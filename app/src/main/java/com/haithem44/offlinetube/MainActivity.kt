@@ -198,7 +198,8 @@ class MainActivity : AppCompatActivity() {
     private var deleteNeedsRetry = false
     private var pendingOpenId: Long = -1L
 
-    private val tabNames = arrayOf("الصفحة الرئيسية", "تابع المشاهدة", "الأطول", "الأقصر", "Shorts")
+    // التبويب رقم 3 أصبح "تمت المشاهدة" بدل "الأقصر"
+    private val tabNames = arrayOf("الصفحة الرئيسية", "تابع المشاهدة", "الأطول", "تمت المشاهدة", "Shorts")
     private val tabTexts = ArrayList<TextView>()
     private val tabLines = ArrayList<View>()
 
@@ -683,7 +684,7 @@ class MainActivity : AppCompatActivity() {
         list = when (tab) {
             1 -> list.filter { prefs.position(it.id) > 0L && !prefs.watched(it.id) }
             2 -> list.sortedByDescending { it.duration }
-            3 -> list.sortedBy { it.duration }
+            3 -> list.filter { prefs.watched(it.id) }.sortedByDescending { prefs.lastTouched(it.id) }
             4 -> list.filter { it.duration in 1L..60000L }
             else -> list
         }
@@ -694,6 +695,7 @@ class MainActivity : AppCompatActivity() {
         emptyText.text = when {
             folderPath.isEmpty() -> "لم يتم اختيار مجلد\nاضغط على \"المجلد\" في الأسفل"
             query.isNotEmpty() -> "لا توجد نتائج لـ \"$query\""
+            tab == 3 -> "لم تشاهد أي فيديو بعد"
             else -> "لا توجد فيديوهات"
         }
     }
@@ -932,6 +934,15 @@ class MainActivity : AppCompatActivity() {
         val shimmer = ShimmerView(this); f.addView(shimmer, FrameLayout.LayoutParams(-1, -1))
         val iv = ImageView(this); iv.scaleType = ImageView.ScaleType.CENTER_CROP; f.addView(iv, FrameLayout.LayoutParams(-1, -1)); loadThumb(v, iv, shimmer)
 
+        val watched = prefs.watched(v.id)
+
+        // تضليل (تعتيم) فوق صورة الفيديو إذا تمت مشاهدته
+        if (watched) {
+            val dim = View(this)
+            dim.setBackgroundColor(Color.parseColor("#99000000"))
+            f.addView(dim, FrameLayout.LayoutParams(-1, -1))
+        }
+
         val badge = TextView(this)
         badge.text = fmt(v.duration)
         badge.setTextColor(Color.WHITE)
@@ -956,13 +967,37 @@ class MainActivity : AppCompatActivity() {
             line.addView(done, LinearLayout.LayoutParams(0, -1, frac)); line.addView(rest, LinearLayout.LayoutParams(0, -1, 1f - frac))
             f.addView(line, FrameLayout.LayoutParams(-1, dp(4), Gravity.BOTTOM))
         }
-        val watched = prefs.watched(v.id)
-        val tagText: String? = when { watched -> "تم المشاهدة"; pos > 0 && dur > 0 && pos < dur - 3000 -> "-" + fmt(dur - pos); else -> null }
-        if (tagText != null) {
-            val tg = TextView(this); tg.text = tagText; tg.setTextColor(Color.WHITE); tg.textSize = 11f; tg.typeface = Typeface.DEFAULT_BOLD; tg.layoutDirection = View.LAYOUT_DIRECTION_LTR
-            val tgShape = GradientDrawable(); tgShape.setColor(Color.parseColor("#99000000")); tgShape.cornerRadius = dp(4).toFloat(); tg.background = tgShape; tg.setPadding(dp(5), dp(1), dp(5), dp(1))
-            val side = if (watched) Gravity.LEFT else Gravity.RIGHT
-            f.addView(tg, FrameLayout.LayoutParams(-2, -2, side or Gravity.TOP).apply { leftMargin = dp(8); rightMargin = dp(8); topMargin = dp(8) })
+
+        if (watched) {
+            // كلمة "تم المشاهدة" في منتصف إطار الفيديو
+            val tg = TextView(this)
+            tg.text = "تم المشاهدة"
+            tg.setTextColor(Color.WHITE)
+            tg.textSize = 14f
+            tg.typeface = Typeface.DEFAULT_BOLD
+            tg.gravity = Gravity.CENTER
+            val tgShape = GradientDrawable()
+            tgShape.setColor(Color.parseColor("#B0000000"))
+            tgShape.cornerRadius = dp(8).toFloat()
+            tg.background = tgShape
+            tg.setPadding(dp(14), dp(6), dp(14), dp(6))
+            f.addView(tg, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+        } else if (pos > 0 && dur > 0 && pos < dur - 3000) {
+            // الوقت المتبقي أعلى اليمين للفيديو غير المكتمل
+            val tg = TextView(this)
+            tg.text = "-" + fmt(dur - pos)
+            tg.setTextColor(Color.WHITE)
+            tg.textSize = 11f
+            tg.typeface = Typeface.DEFAULT_BOLD
+            tg.layoutDirection = View.LAYOUT_DIRECTION_LTR
+            val tgShape = GradientDrawable()
+            tgShape.setColor(Color.parseColor("#99000000"))
+            tgShape.cornerRadius = dp(4).toFloat()
+            tg.background = tgShape
+            tg.setPadding(dp(5), dp(1), dp(5), dp(1))
+            f.addView(tg, FrameLayout.LayoutParams(-2, -2, Gravity.RIGHT or Gravity.TOP).apply {
+                rightMargin = dp(8); topMargin = dp(8)
+            })
         }
         return f
     }
@@ -1378,7 +1413,7 @@ class MainActivity : AppCompatActivity() {
             e.apply()
         }
 
-        fun markWatched(id: Long) = sp.edit().putBoolean("w_$id", true).apply()
+        fun markWatched(id: Long) = sp.edit().putBoolean("w_$id", true).putLong("t_$id", System.currentTimeMillis()).apply()
         fun resetProgress(id: Long) = sp.edit().remove("p_$id").remove("w_$id").apply()
         fun clearVideo(id: Long) = sp.edit().remove("p_$id").remove("d_$id").remove("w_$id").remove("t_$id").apply()
     }
