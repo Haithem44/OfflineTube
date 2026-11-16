@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.haithem44.offlinetube">
 
-    <!-- صلاحيات قراءة الفيديوهات -->
+    <!-- صلاحيات قراءة الفيديوهات من الهاتف -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
@@ -27,10 +27,12 @@
             android:resizeableActivity="true"
             android:supportsPictureInPicture="true"
             android:launchMode="singleTask">
+            
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            
         </activity>
 
     </application>
