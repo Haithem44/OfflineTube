@@ -2,45 +2,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- ========== الصلاحيات ========== -->
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" android:minSdkVersion="33" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" android:minSdkVersion="34" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" tools:ignore="ScopedStorage" />
 
-    <!-- Android 13+ (API 33) -->
-    <uses-permission
-        android:name="android.permission.READ_MEDIA_VIDEO"
-        android:minSdkVersion="33" />
-
-    <!-- Android 14+ (API 34) - وصول جزئي للفيديوهات المختارة -->
-    <uses-permission
-        android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED"
-        android:minSdkVersion="34" />
-
-    <!-- Android 12 وأقل (API 32 وما دون) -->
-    <uses-permission
-        android:name="android.permission.READ_EXTERNAL_STORAGE"
-        android:maxSdkVersion="32" />
-
-    <!-- للكتابة على Android 9 وأقل (لأن MediaStore قد يحتاجها للحذف على بعض الأجهزة القديمة) -->
-    <uses-permission
-        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="28"
-        tools:ignore="ScopedStorage" />
-
-    <!-- ========== ميزات الجهاز ========== -->
-
-    <!-- الوضع المصغّر (Picture-in-Picture) - API 26+ -->
-    <uses-feature
-        android:name="android.software.picture_in_picture"
-        android:required="false" />
-
-    <!-- التطبيق يحتاج شاشة لمس -->
-    <uses-feature
-        android:name="android.hardware.touchscreen"
-        android:required="false" />
-
-    <!-- ========== التطبيق ========== -->
+    <uses-feature android:name="android.software.picture_in_picture" android:required="false" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
     <application
-        android:name=".App"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -54,7 +24,6 @@
         android:largeHeap="true"
         tools:targetApi="34">
 
-        <!-- النشاط الرئيسي -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -66,14 +35,12 @@
             android:resizeableActivity="true"
             android:theme="@style/Theme.OfflineTube"
             tools:targetApi="34">
-
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 
-        <!-- مزوّد محتوى لفتح الفيديوهات من تطبيقات أخرى (اختياري) -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -85,5 +52,4 @@
         </provider>
 
     </application>
-
 </manifest>
