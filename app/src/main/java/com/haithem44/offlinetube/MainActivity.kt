@@ -1210,13 +1210,13 @@ class MainActivity : AppCompatActivity() {
         timeText = TextView(this); timeText.setTextColor(Color.WHITE); timeText.textSize = 12f; timeText.text = "0:00 / 0:00"; timeText.setPadding(dp(6), 0, dp(6), 0)
         seekRow.addView(timeText)
 
-        // زر الدخول/الخروج من ملء الشاشة (أسفل يمين الفيديو مثل يوتيوب)
+        // زر الخروج من الفيديو (أسفل يمين الفيديو): يغلق المشغّل ويرجع للقائمة
         fsBtn = ImageView(this)
         fsBtn.scaleType = ImageView.ScaleType.FIT_CENTER
-        fsBtn.setImageDrawable(IconDrawable(IconDrawable.EXPAND, Color.WHITE))
+        fsBtn.setImageDrawable(IconDrawable(IconDrawable.COMPRESS, Color.WHITE))
         fsBtn.setPadding(dp(8), dp(8), dp(8), dp(8))
-        fsBtn.contentDescription = "ملء الشاشة"
-        fsBtn.setOnClickListener { toggleFullscreen() }
+        fsBtn.contentDescription = "الخروج من الفيديو"
+        fsBtn.setOnClickListener { closePlayer() }
         seekRow.addView(fsBtn, LinearLayout.LayoutParams(dp(42), dp(42)))
 
         controls.addView(seekRow, LinearLayout.LayoutParams(-1, -2))
@@ -1387,7 +1387,6 @@ class MainActivity : AppCompatActivity() {
                 videoH = videoSize.height
                 if (videoW > videoH && !isLandscape) {
                     isLandscape = true
-                    updateFsIcon()
                     requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                 }
             }
@@ -1434,16 +1433,6 @@ class MainActivity : AppCompatActivity() {
         exoPlayer.prepare()
     }
 
-    private fun updateFsIcon() {
-        fsBtn.setImageDrawable(IconDrawable(if (isLandscape) IconDrawable.COMPRESS else IconDrawable.EXPAND, Color.WHITE))
-    }
-
-    private fun toggleFullscreen() {
-        isLandscape = !isLandscape
-        updateFsIcon()
-        requestedOrientation = if (isLandscape) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-    }
-
     @Suppress("DEPRECATION")
     private fun hideSystemBars(hide: Boolean) {
         window.decorView.systemUiVisibility = if (hide) {
@@ -1459,7 +1448,8 @@ class MainActivity : AppCompatActivity() {
         releasePlayer(); current = null; pending = null; videoW = 0; videoH = 0; locked = false; speedIdx = 2
         ui.removeCallbacks(hideHud); ui.removeCallbacks(hideUnlock); hudText.visibility = View.GONE; unlockBtn.visibility = View.GONE
         val lp = window.attributes; lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE; window.attributes = lp
-        playerRoot.visibility = View.GONE; isLandscape = false; updateFsIcon(); requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED; hideSystemBars(false); refresh()
+        playerRoot.visibility = View.GONE; isLandscape = false
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED; hideSystemBars(false); refresh()
     }
 
     private fun releasePlayer() {
