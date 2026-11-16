@@ -217,7 +217,7 @@ class MainActivity : AppCompatActivity() {
 
     private val mediaObserver = object : ContentObserver(ui) {
         override fun onChange(selfChange: Boolean) {
-            if (playerRoot.visibility != View.VISIBLE && folderPath.isNotEmpty()) {
+            if (playerRoot.visibility != View.VISIBLE) {
                 loadVideos()
             }
         }
@@ -225,7 +225,7 @@ class MainActivity : AppCompatActivity() {
 
     private val cache = object : LruCache<Long, Bitmap>((Runtime.getRuntime().maxMemory() / 1024 / 6).toInt()) {
         override fun sizeOf(key: Long, value: Bitmap): Int = value.byteCount / 1024
-        override fun entryRemoved(evicted: Boolean, key: Long, old: Bitmap, new: Bitmap?) { /* GC يتولى */ }
+        override fun entryRemoved(evicted: Boolean, key: Long, old: Bitmap, new: Bitmap?) { }
     }
 
     private val thumbW: Int by lazy { maxOf(resources.displayMetrics.widthPixels, 1080).coerceAtMost(2160) }
@@ -406,7 +406,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         emptyText = TextView(this)
-        emptyText.text = "لا توجد فيديوهات"
+        emptyText.text = "جارٍ تحميل الفيديوهات..."
         emptyText.setTextColor(gray)
         emptyText.textSize = 16f
         emptyText.gravity = Gravity.CENTER
@@ -655,21 +655,34 @@ class MainActivity : AppCompatActivity() {
         val bar = LinearLayout(this); bar.orientation = LinearLayout.VERTICAL; bar.setBackgroundColor(bg)
         val divider = View(this); divider.setBackgroundColor(Color.parseColor("#2A2A2A")); bar.addView(divider, LinearLayout.LayoutParams(-1, dp(1)))
         val row = LinearLayout(this); row.orientation = LinearLayout.HORIZONTAL
-        row.addView(navItem(IconDrawable.HOME, "الرئيسية", 0) { selectTab(0) }, navLp())
-        row.addView(navItem(IconDrawable.SEARCH, "بحث", -1) { openSearch() }, navLp())
-        row.addView(navItem(IconDrawable.PLAY, "تابع", 1) { selectTab(1) }, navLp())
-        row.addView(navItem(IconDrawable.REFRESH, "تحديث", -1) { reloadVideos() }, navLp())
-        row.addView(navItem(IconDrawable.FOLDER, "المجلد", -1) { pickFolder() }, navLp())
+        row.addView(navItem(IconDrawable.HOME, "الرئيسية", 0, { selectTab(0) }), navLp())
+        row.addView(navItem(IconDrawable.SEARCH, "بحث", -1, { openSearch() }), navLp())
+        row.addView(navItem(IconDrawable.PLAY, "تابع", 1, { selectTab(1) }), navLp())
+        row.addView(navItem(IconDrawable.REFRESH, "تحديث", -1, { reloadVideos() }), navLp())
+        // زر المجلد: ضغطة = اختيار مجلد للفلترة، ضغطة مطولة = إلغاء الفلتر وعرض كل الفيديوهات
+        row.addView(navItem(
+            IconDrawable.FOLDER, "المجلد", -1,
+            { pickFolder() },
+            {
+                if (folderPath.isNotEmpty()) {
+                    folderPath = ""; prefs.folderPath = ""; loadVideos()
+                    Toast.makeText(this@MainActivity, "عرض جميع فيديوهات الهاتف", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(this@MainActivity, "اختر مجلداً للفلترة", Toast.LENGTH_SHORT).show()
+                }
+            }
+        ), navLp())
         bar.addView(row, LinearLayout.LayoutParams(-1, 0, 1f)); updateNavStyles(); return bar
     }
 
-    private fun navItem(kind: Int, label: String, tabIdx: Int, onClick: () -> Unit): View {
+    private fun navItem(kind: Int, label: String, tabIdx: Int, onClick: () -> Unit, onLongClick: (() -> Unit)? = null): View {
         val col = LinearLayout(this); col.orientation = LinearLayout.VERTICAL; col.gravity = Gravity.CENTER
         val icon = IconDrawable(kind, navInactive); val iv = ImageView(this); iv.setImageDrawable(icon)
         val l = TextView(this); l.text = label; l.textSize = 11f; l.setTextColor(navInactive); l.gravity = Gravity.CENTER
         col.addView(iv, LinearLayout.LayoutParams(dp(24), dp(24)))
         col.addView(l, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
         col.setPadding(dp(4), dp(4), dp(4), dp(6)); col.setOnClickListener { onClick() }
+        if (onLongClick != null) col.setOnLongClickListener { onLongClick(); true }
         make3D(col, Color.parseColor("#333333"), Color.parseColor("#181818"), 16)
         navRefs.add(NavRef(tabIdx, icon, l)); return col
     }
@@ -697,9 +710,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateEmptyState() {
         emptyText.text = when {
-            folderPath.isEmpty() -> "لم يتم اختيار مجلد\nاضغط على \"المجلد\" في الأسفل"
+            all.isEmpty() -> "لا توجد فيديوهات على الهاتف\nاسحب للأسفل للتحديث"
             query.isNotEmpty() -> "لا توجد نتائج لـ \"$query\""
             tab == 3 -> "لم تشاهد أي فيديو بعد"
+            folderPath.isNotEmpty() -> "لا توجد فيديوهات في المجلد المحدد\nاضغط مطولاً على \"المجلد\" لعرض الكل"
             else -> "لا توجد فيديوهات"
         }
     }
@@ -778,6 +792,7 @@ class MainActivity : AppCompatActivity() {
         super.onRequestPermissionsResult(code, perms, res)
         val anyGranted = res.any { it == PackageManager.PERMISSION_GRANTED }
         if (anyGranted) { startLoad(); registerMediaObserver() }
+        else Toast.makeText(this, "يجب منح صلاحية قراءة الفيديوهات لعرض مكتبتك", Toast.LENGTH_LONG).show()
     }
 
     private fun registerMediaObserver() {
@@ -788,24 +803,43 @@ class MainActivity : AppCompatActivity() {
         } catch (_: Exception) {}
     }
 
-    private fun startLoad() { if (folderPath.isEmpty()) pickFolder() else reloadVideos() }
+    // ✅ الإصلاح: لم يعد يفرض اختيار مجلد — يقرأ من الهاتف مباشرة
+    private fun startLoad() { loadVideos() }
 
     override fun onResume() {
         super.onResume()
         if (firstResume) { firstResume = false; return }
-        if (playerRoot.visibility != View.VISIBLE && folderPath.isNotEmpty()) reloadVideos()
+        if (playerRoot.visibility != View.VISIBLE) reloadVideos()
     }
 
+    /**
+     * ✅ الدالة المُصحّحة: تضيف DATA و RELATIVE_PATH إلى الـ projection
+     *    - إذا كان folderPath فارغاً → يجلب كل فيديوهات الهاتف
+     *    - إذا كان folderPath محدداً → يفلتر على ذلك المجلد
+     */
     private fun loadVideos() {
         val folder = folderPath
-        if (folder.isEmpty()) { finishRefresh(); return }
         pool.execute {
             val list = ArrayList<VideoItem>()
-            val proj = arrayOf(
-                MediaStore.Video.Media._ID,
-                MediaStore.Video.Media.DISPLAY_NAME,
-                MediaStore.Video.Media.DURATION
-            )
+
+            // ✅ العمود المناسب حسب إصدار أندرويد
+            val proj: Array<String> = if (Build.VERSION.SDK_INT >= 29) {
+                arrayOf(
+                    MediaStore.Video.Media._ID,
+                    MediaStore.Video.Media.DISPLAY_NAME,
+                    MediaStore.Video.Media.DURATION,
+                    MediaStore.Video.Media.RELATIVE_PATH
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                arrayOf(
+                    MediaStore.Video.Media._ID,
+                    MediaStore.Video.Media.DISPLAY_NAME,
+                    MediaStore.Video.Media.DURATION,
+                    MediaStore.Video.Media.DATA
+                )
+            }
+
             try {
                 contentResolver.query(
                     MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
@@ -817,32 +851,32 @@ class MainActivity : AppCompatActivity() {
                     val iDur = c.getColumnIndexOrThrow(MediaStore.Video.Media.DURATION)
 
                     @Suppress("DEPRECATION")
-                    val iData = c.getColumnIndex(MediaStore.Video.Media.DATA)
+                    val iData = if (Build.VERSION.SDK_INT < 29) c.getColumnIndex(MediaStore.Video.Media.DATA) else -1
                     val iRel = if (Build.VERSION.SDK_INT >= 29) c.getColumnIndex(MediaStore.Video.Media.RELATIVE_PATH) else -1
 
                     val normFolder = folder.trimEnd('/')
                     val primaryBase = Environment.getExternalStorageDirectory().absolutePath.trimEnd('/')
-                    val primaryTarget: String? = if (normFolder.startsWith(primaryBase)) {
+                    val primaryTarget: String? = if (folder.isNotEmpty() && normFolder.startsWith(primaryBase)) {
                         normFolder.substring(primaryBase.length).trimStart('/')
                     } else null
 
                     while (c.moveToNext()) {
                         val id = c.getLong(iId)
-                        var inFolder = false
 
-                        if (iData >= 0) {
-                            val data = c.getString(iData)
-                            if (data != null && (data == normFolder || data.startsWith("$normFolder/"))) {
-                                inFolder = true
+                        // ✅ إذا لم يختر المستخدم مجلداً → اعرض كل الفيديوهات
+                        var inFolder = folder.isEmpty()
+
+                        if (!inFolder) {
+                            // أندرويد < 10: مطابقة عبر المسار الكامل DATA
+                            if (iData >= 0) {
+                                @Suppress("DEPRECATION")
+                                val data = c.getString(iData)
+                                if (data != null && (data == normFolder || data.startsWith("$normFolder/"))) inFolder = true
                             }
-                        }
-
-                        if (!inFolder && primaryTarget != null && iRel >= 0) {
-                            val rel = c.getString(iRel)?.trimEnd('/') ?: ""
-                            if (primaryTarget.isEmpty()) {
-                                inFolder = true
-                            } else if (rel == primaryTarget || rel.startsWith("$primaryTarget/")) {
-                                inFolder = true
+                            // أندرويد 10+: مطابقة عبر RELATIVE_PATH
+                            if (!inFolder && primaryTarget != null && iRel >= 0) {
+                                val rel = c.getString(iRel)?.trimEnd('/') ?: ""
+                                if (primaryTarget.isEmpty() || rel == primaryTarget || rel.startsWith("$primaryTarget/")) inFolder = true
                             }
                         }
 
@@ -854,6 +888,7 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             } catch (_: Exception) {}
+
             val mixed = interleave(list)
             ui.post {
                 all.clear(); all.addAll(mixed); refresh(); finishRefresh()
@@ -862,8 +897,9 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ✅ لم يعد يفرض اختيار مجلد عند التحديث
     private fun reloadVideos() {
-        if (refreshing) return; if (folderPath.isEmpty()) { pickFolder(); return }
+        if (refreshing) return
         refreshing = true; refreshBar.text = "↻ جارٍ التحديث..."; refreshBar.visibility = View.VISIBLE; loadVideos()
     }
 
