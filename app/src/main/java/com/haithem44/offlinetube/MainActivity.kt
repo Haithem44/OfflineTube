@@ -5,6 +5,8 @@ import android.animation.ValueAnimator
 import android.app.AlertDialog
 import android.app.PictureInPictureParams
 import android.app.RecoverableSecurityException
+import android.content.ContentUris
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
@@ -31,6 +33,7 @@ import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
 import android.media.AudioManager
 import android.media.MediaMetadataRetriever
+import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -67,6 +70,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.PopupMenu
+import android.widget.ProgressBar
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
@@ -82,8 +86,21 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import java.io.File
 import java.io.FileOutputStream
+import java.io.OutputStream
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.Locale
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import org.schabi.newpipe.extractor.NewPipe
+import org.schabi.newpipe.extractor.ServiceList
+import org.schabi.newpipe.extractor.comments.CommentsInfo
+import org.schabi.newpipe.extractor.comments.CommentsInfoItem
+import org.schabi.newpipe.extractor.downloader.Downloader
+import org.schabi.newpipe.extractor.downloader.Request
+import org.schabi.newpipe.extractor.downloader.Response
+import org.schabi.newpipe.extractor.stream.StreamInfo
 
 data class VideoItem(val id: Long, val title: String, val duration: Long, val uri: Uri)
 
@@ -189,6 +206,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var logo: LinearLayout
     private lateinit var searchBox: EditText
     private lateinit var emptyText: TextView
+    private lateinit var ytPanel: LinearLayout   // [YouTube] لوحة تبويب يوتيوب
+    private val YT_TAB = 5                       // [YouTube] رقم تبويب يوتيوب
     private var hasBanner = false
     private var tab = 0
     private var query = ""
@@ -205,7 +224,7 @@ class MainActivity : AppCompatActivity() {
     private var pendingOpenId: Long = -1L
     private var observerRegistered = false
 
-    private val tabNames = arrayOf("الصفحة الرئيسية", "تابع المشاهدة", "الأطول", "تمت المشاهدة", "Shorts")
+    private val tabNames = arrayOf("الصفحة الرئيسية", "تابع المشاهدة", "الأطول", "تمت المشاهدة", "Shorts", "YouTube")
     private val tabTexts = ArrayList<TextView>()
     private val tabLines = ArrayList<View>()
 
@@ -418,6 +437,11 @@ class MainActivity : AppCompatActivity() {
         listFrame.addView(listView, FrameLayout.LayoutParams(-1, -1))
         listFrame.addView(emptyText, FrameLayout.LayoutParams(-1, -1))
         listView.emptyView = emptyText
+
+        // [YouTube] لوحة تبويب يوتيوب فوق القائمة
+        ytPanel = YoutubeTab(this, { folderPath }, { reloadVideos() }).view
+        listFrame.addView(ytPanel, FrameLayout.LayoutParams(-1, -1))
+        ytPanel.visibility = if (tab == YT_TAB) View.VISIBLE else View.GONE
 
         refreshBar = TextView(this)
         refreshBar.text = "↻ جارٍ التحديث..."
@@ -648,7 +672,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun selectTab(i: Int) {
-        tab = i; prefs.lastTab = i; updateTabStyles(); refresh(); listView.setSelection(0)
+        tab = i; prefs.lastTab = i
+        ytPanel.visibility = if (i == YT_TAB) View.VISIBLE else View.GONE   // [YouTube]
+        updateTabStyles(); refresh(); listView.setSelection(0)
     }
 
     private fun navLp() = LinearLayout.LayoutParams(0, -1, 1f).apply { setMargins(dp(5), dp(5), dp(5), dp(5)) }
@@ -698,6 +724,7 @@ class MainActivity : AppCompatActivity() {
             2 -> list.sortedByDescending { it.duration }
             3 -> list.filter { prefs.watched(it.id) }.sortedByDescending { prefs.lastTouched(it.id) }
             4 -> list.filter { it.duration in 1L..60000L }
+            5 -> emptyList()   // [YouTube] تبويب يوتيوب لا يعرض قائمة
             else -> list
         }
         shown.clear(); shown.addAll(list); adapter.notifyDataSetChanged(); rebuildContinue(); updateEmptyState()
@@ -938,6 +965,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun afterDeleted(v: VideoItem) {
         all.remove(v); cache.remove(v.id); try { thumbFile(v).delete() } catch (_: Exception) {}
+        // [YouTube] احذف ملف التعليقات المرتبط بالفيديو
+        try { File(File(filesDir, "comments"), "${v.id}.txt").delete() } catch (_: Exception) {}
         prefs.clearVideo(v.id); refresh(); Toast.makeText(this@MainActivity, "تم حذف الفيديو", Toast.LENGTH_SHORT).show()
     }
 
@@ -1504,5 +1533,227 @@ class MainActivity : AppCompatActivity() {
         fun markWatched(id: Long) = sp.edit().putBoolean("w_$id", true).putLong("t_$id", System.currentTimeMillis()).apply()
         fun resetProgress(id: Long) = sp.edit().remove("p_$id").remove("w_$id").apply()
         fun clearVideo(id: Long) = sp.edit().remove("p_$id").remove("d_$id").remove("w_$id").remove("t_$id").apply()
+    }
+}
+
+/** Downloader مطلوب من NewPipeExtractor */
+class YtDownloader : Downloader() {
+    override fun execute(request: Request): Response {
+        val conn = URL(request.url()).openConnection() as HttpURLConnection
+        conn.requestMethod = request.httpMethod()
+        conn.connectTimeout = 30000
+        conn.readTimeout = 30000
+        conn.setRequestProperty(
+            "User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0"
+        )
+        for ((k, vals) in request.headers()) {
+            conn.setRequestProperty(k, vals.joinToString(", "))
+        }
+        val data = request.dataToSend()
+        if (data != null) {
+            conn.doOutput = true
+            conn.outputStream.use { it.write(data) }
+        }
+        val code = conn.responseCode
+        val stream = if (code in 200..399) conn.inputStream else conn.errorStream
+        val body = stream?.bufferedReader()?.use { it.readText() } ?: ""
+        val headers = HashMap<String, List<String>>()
+        for ((k, v) in conn.headerFields) { if (k != null) headers[k] = v }
+        return Response(code, conn.responseMessage, headers, body, conn.url.toString())
+    }
+}
+
+/**
+ * تبويب YouTube: يلصق المستخدم الرابط → ينزّل الفيديو + أول 50 تعليق.
+ * الفيديو يُحفظ في المجلد المختار، والتعليقات في filesDir/comments/<mediaId>.txt
+ */
+class YoutubeTab(
+    private val act: AppCompatActivity,
+    private val folder: () -> String,
+    private val onDone: () -> Unit
+) {
+    companion object {
+        const val MAX_COMMENTS = 50
+        private var inited = false
+    }
+
+    val view = LinearLayout(act)
+    private val input = EditText(act)
+    private val btn = TextView(act)
+    private val status = TextView(act)
+    private val bar = ProgressBar(act, null, android.R.attr.progressBarStyleHorizontal)
+    private val io = Executors.newSingleThreadExecutor()
+    private val ui = Handler(Looper.getMainLooper())
+    private var busy = false
+
+    private fun dp(v: Int) = (v * act.resources.displayMetrics.density).toInt()
+
+    init {
+        if (!inited) { NewPipe.init(YtDownloader()); inited = true }
+
+        view.orientation = LinearLayout.VERTICAL
+        view.setBackgroundColor(Color.parseColor("#0F0F0F"))
+        view.setPadding(dp(16), dp(20), dp(16), dp(16))
+        view.layoutDirection = android.view.View.LAYOUT_DIRECTION_RTL
+        view.isClickable = true
+
+        val title = TextView(act)
+        title.text = "YouTube"; title.setTextColor(Color.WHITE); title.textSize = 20f
+        view.addView(title)
+
+        input.hint = "الصق رابط الفيديو هنا"
+        input.setHintTextColor(Color.LTGRAY); input.setTextColor(Color.WHITE)
+        input.isSingleLine = true; input.setPadding(dp(14), dp(10), dp(14), dp(10))
+        input.background = GradientDrawable().apply { setColor(Color.parseColor("#303030")); cornerRadius = dp(14).toFloat() }
+        view.addView(input, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(14) })
+
+        btn.text = "تنزيل الفيديو + 50 تعليق"
+        btn.setTextColor(Color.WHITE); btn.textSize = 15f; btn.gravity = Gravity.CENTER
+        btn.setPadding(dp(16), dp(12), dp(16), dp(12))
+        btn.background = GradientDrawable().apply { setColor(Color.parseColor("#FF0000")); cornerRadius = dp(14).toFloat() }
+        btn.setOnClickListener { start() }
+        view.addView(btn, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+
+        bar.max = 100; bar.visibility = android.view.View.GONE
+        view.addView(bar, LinearLayout.LayoutParams(-1, dp(8)).apply { topMargin = dp(16) })
+
+        status.setTextColor(Color.parseColor("#AAAAAA")); status.textSize = 13f
+        status.setPadding(0, dp(10), 0, 0)
+        view.addView(status)
+    }
+
+    private fun setStatus(s: String) = ui.post { status.text = s }
+
+    private fun start() {
+        if (busy) return
+        val url = input.text.toString().trim()
+        if (url.isEmpty()) { Toast.makeText(act, "ألصق الرابط أولاً", Toast.LENGTH_SHORT).show(); return }
+        if (folder().isEmpty()) { Toast.makeText(act, "اختر مجلد الفيديوهات أولاً (زر المجلد)", Toast.LENGTH_LONG).show(); return }
+        busy = true; btn.alpha = 0.5f
+        bar.visibility = android.view.View.VISIBLE; bar.progress = 0
+        io.execute {
+            try {
+                setStatus("جارٍ جلب معلومات الفيديو...")
+                val info = StreamInfo.getInfo(ServiceList.YouTube, url)
+
+                // أفضل جودة تحتوي صوت وصورة معاً (progressive)
+                val stream = info.videoStreams
+                    .filter { it.isUrl }
+                    .maxByOrNull { Regex("\\d+").find(it.resolution)?.value?.toIntOrNull() ?: 0 }
+                    ?: throw IllegalStateException("لا يوجد رابط تنزيل مباشر لهذا الفيديو")
+
+                val title = info.name.replace(Regex("[\\\\/:*?\"<>|]"), "_").take(100)
+
+                setStatus("جارٍ تنزيل الفيديو (${stream.resolution})...")
+                val mediaId = saveVideo(title, stream.content)
+
+                setStatus("جارٍ جلب التعليقات...")
+                val comments = try { fetchComments(url) } catch (e: Exception) { emptyList() }
+                saveComments(mediaId, title, comments)
+
+                setStatus("✓ تم تنزيل الفيديو و ${comments.size} تعليق")
+                ui.post { onDone() }
+            } catch (e: Exception) {
+                setStatus("✗ فشل: ${e.message ?: e.javaClass.simpleName}")
+            } finally {
+                ui.post { busy = false; btn.alpha = 1f; bar.visibility = android.view.View.GONE }
+            }
+        }
+    }
+
+    private fun fetchComments(url: String): List<String> {
+        val out = ArrayList<String>()
+        fun add(items: List<CommentsInfoItem>) {
+            for (c in items) {
+                if (out.size >= MAX_COMMENTS) return
+                val text = c.commentText?.content ?: ""
+                out.add("${c.uploaderName} (👍 ${c.likeCount}):\n$text")
+            }
+        }
+        val ci = CommentsInfo.getInfo(url)
+        add(ci.relatedItems)
+        var page = ci.nextPage
+        while (out.size < MAX_COMMENTS && page != null) {
+            val more = CommentsInfo.getMoreItems(ServiceList.YouTube, url, page)
+            add(more.items)
+            page = more.nextPage
+        }
+        return out
+    }
+
+    private fun saveComments(mediaId: Long, title: String, comments: List<String>) {
+        val dir = File(act.filesDir, "comments").apply { mkdirs() }
+        File(dir, "$mediaId.txt").writeText(
+            title + "\n\n" + comments.joinToString("\n\n──────────\n\n")
+        )
+    }
+
+    /** يحفظ الفيديو ويرجع معرّف MediaStore */
+    private fun saveVideo(title: String, link: String): Long {
+        val resolver = act.contentResolver
+        val folderPath = folder()
+        val base = Environment.getExternalStorageDirectory().absolutePath.trimEnd('/')
+
+        var uri: android.net.Uri? = null
+        var file: File? = null
+        val out: OutputStream
+
+        if (Build.VERSION.SDK_INT >= 29) {
+            var rel = if (folderPath.startsWith(base)) folderPath.removePrefix(base).trim('/') + "/" else "Movies/OfflineTube/"
+            fun insert(r: String): android.net.Uri? {
+                val cv = ContentValues().apply {
+                    put(MediaStore.Video.Media.DISPLAY_NAME, "$title.mp4")
+                    put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                    put(MediaStore.Video.Media.RELATIVE_PATH, r)
+                    put(MediaStore.Video.Media.IS_PENDING, 1)
+                }
+                return resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, cv)
+            }
+            uri = try { insert(rel) } catch (e: Exception) { null }
+            if (uri == null) { rel = "Movies/OfflineTube/"; uri = insert(rel) }
+            out = resolver.openOutputStream(uri!!) ?: throw IllegalStateException("تعذّر فتح ملف الحفظ")
+        } else {
+            file = File(folderPath, "$title.mp4")
+            file.parentFile?.mkdirs()
+            out = FileOutputStream(file)
+        }
+
+        try {
+            val conn = URL(link).openConnection() as HttpURLConnection
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0")
+            conn.connectTimeout = 30000; conn.readTimeout = 30000
+            val total = conn.contentLengthLong
+            var done = 0L; var lastPct = -1
+            conn.inputStream.use { inp ->
+                out.use { o ->
+                    val buf = ByteArray(64 * 1024)
+                    while (true) {
+                        val n = inp.read(buf); if (n < 0) break
+                        o.write(buf, 0, n); done += n
+                        if (total > 0) {
+                            val pct = (done * 100 / total).toInt()
+                            if (pct != lastPct) { lastPct = pct; ui.post { bar.progress = pct } }
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            if (uri != null) resolver.delete(uri, null, null) else file?.delete()
+            throw e
+        }
+
+        if (uri != null) {
+            val cv = ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }
+            resolver.update(uri, cv, null, null)
+            return ContentUris.parseId(uri)
+        }
+        val latch = CountDownLatch(1)
+        var scanned: android.net.Uri? = null
+        MediaScannerConnection.scanFile(act, arrayOf(file!!.absolutePath), null) { _, u ->
+            scanned = u; latch.countDown()
+        }
+        latch.await(5, TimeUnit.SECONDS)
+        return scanned?.let { ContentUris.parseId(it) } ?: 0L
     }
 }
