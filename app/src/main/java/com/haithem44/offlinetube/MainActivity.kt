@@ -122,12 +122,9 @@ class IconDrawable(private val kind: Int, initial: Int) : Drawable() {
             REFRESH -> { canvas.drawArc(RectF(4f, 4f, 20f, 20f), 25f, 300f, false, paint); p.moveTo(18.5f, 2.5f); p.lineTo(18.5f, 7.5f); p.lineTo(13.5f, 7.5f) }
             FOLDER -> { p.moveTo(3f, 6f); p.lineTo(9f, 6f); p.lineTo(11f, 8f); p.lineTo(21f, 8f); p.lineTo(21f, 19f); p.lineTo(3f, 19f); p.close() }
             TRASH -> {
-                // غطاء السلة + المقبض
                 p.moveTo(3.5f, 6f); p.lineTo(20.5f, 6f)
                 p.moveTo(9f, 6f); p.lineTo(9f, 4.5f); p.quadTo(9f, 3.5f, 10f, 3.5f); p.lineTo(14f, 3.5f); p.quadTo(15f, 3.5f, 15f, 4.5f); p.lineTo(15f, 6f)
-                // جسم السلة بحواف مستديرة
                 p.moveTo(5.5f, 6f); p.lineTo(6.4f, 19.2f); p.quadTo(6.5f, 20.5f, 7.8f, 20.5f); p.lineTo(16.2f, 20.5f); p.quadTo(17.5f, 20.5f, 17.6f, 19.2f); p.lineTo(18.5f, 6f)
-                // الخطان الداخليان
                 p.moveTo(10f, 10f); p.lineTo(10f, 16.5f)
                 p.moveTo(14f, 10f); p.lineTo(14f, 16.5f)
             }
@@ -171,6 +168,9 @@ class ShimmerView(ctx: Context) : View(ctx) {
 
 class MainActivity : AppCompatActivity() {
 
+    // ===== اسم التطبيق: غيّره هنا فقط =====
+    private val appName = "TUBE TV PRO"
+
     private lateinit var prefs: Prefs
     private val bg = Color.parseColor("#0F0F0F")
     private val red = Color.parseColor("#FF0000")
@@ -202,7 +202,6 @@ class MainActivity : AppCompatActivity() {
     private var deleteNeedsRetry = false
     private var pendingOpenId: Long = -1L
 
-    // التبويب رقم 3 أصبح "تمت المشاهدة" بدل "الأقصر"
     private val tabNames = arrayOf("الصفحة الرئيسية", "تابع المشاهدة", "الأطول", "تمت المشاهدة", "Shorts")
     private val tabTexts = ArrayList<TextView>()
     private val tabLines = ArrayList<View>()
@@ -286,7 +285,6 @@ class MainActivity : AppCompatActivity() {
     private val hideHud = Runnable { hudText.visibility = View.GONE }
     private val hideUnlock = Runnable { if (locked) unlockBtn.visibility = View.GONE }
 
-    // حفظ موضع المشاهدة: إذا انتهى الفيديو نحفظ 0 بدل النهاية
     private fun saveProgress(p: ExoPlayer, c: VideoItem) {
         try {
             val dur = p.duration
@@ -485,7 +483,7 @@ class MainActivity : AppCompatActivity() {
         splash.addView(sIcon, LinearLayout.LayoutParams(-2, -2))
 
         val sName = TextView(this)
-        sName.text = "OfflineTube"; sName.setTextColor(Color.WHITE); sName.textSize = 28f; sName.typeface = Typeface.DEFAULT_BOLD; sName.gravity = Gravity.CENTER
+        sName.text = appName; sName.setTextColor(Color.WHITE); sName.textSize = 28f; sName.typeface = Typeface.DEFAULT_BOLD; sName.gravity = Gravity.CENTER
         splash.addView(sName, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(14) })
 
         rootFrame.addView(splash, FrameLayout.LayoutParams(-1, -1))
@@ -525,7 +523,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // زر عصري وأنيق للمشغل (شكل دائري، خلفية شفافة، وتأثير Scale)
     private fun makePlayerBtn(kind: Int, bgColor: Int = Color.parseColor("#33FFFFFF"), onClick: () -> Unit): ImageView {
         val b = ImageView(this)
         b.scaleType = ImageView.ScaleType.FIT_CENTER
@@ -581,7 +578,7 @@ class MainActivity : AppCompatActivity() {
         val iconShape = GradientDrawable(); iconShape.setColor(red); iconShape.cornerRadius = dp(7).toFloat()
         icon.background = iconShape; icon.setPadding(dp(8), dp(3), dp(8), dp(3)); logo.addView(icon)
         val name = TextView(this)
-        name.text = "OfflineTube"; name.setTextColor(Color.WHITE); name.textSize = 21f; name.typeface = Typeface.DEFAULT_BOLD; name.setPadding(dp(6), 0, 0, 0)
+        name.text = appName; name.setTextColor(Color.WHITE); name.textSize = 21f; name.typeface = Typeface.DEFAULT_BOLD; name.setPadding(dp(6), 0, 0, 0)
         logo.addView(name); logo.visibility = if (hasBanner) View.INVISIBLE else View.VISIBLE
         row.addView(logo, LinearLayout.LayoutParams(0, -2, 1f))
 
@@ -768,10 +765,8 @@ class MainActivity : AppCompatActivity() {
         try { contentResolver.registerContentObserver(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true, mediaObserver) } catch (_: Exception) {}
     }
 
-    // تحديث القائمة عند كل فتح للتطبيق (مع إظهار شريط "جارٍ التحديث")
     private fun startLoad() { if (folderPath.isEmpty()) pickFolder() else reloadVideos() }
 
-    // تحديث القائمة عند الرجوع للتطبيق من الخلفية
     override fun onResume() {
         super.onResume()
         if (firstResume) { firstResume = false; return }
@@ -867,7 +862,6 @@ class MainActivity : AppCompatActivity() {
     private fun screenW() = resources.displayMetrics.widthPixels
 
     private fun videoItemView(v: VideoItem): View {
-        // الصورة بعرض الشاشة كاملاً بدون حواف جانبية (مثل يوتيوب)
         val w = screenW(); val th = w * 9 / 16
         val box = LinearLayout(this); box.orientation = LinearLayout.VERTICAL
         box.setPadding(0, 0, 0, dp(6))
@@ -945,7 +939,6 @@ class MainActivity : AppCompatActivity() {
 
         val watched = prefs.watched(v.id)
 
-        // تضليل (تعتيم) فوق صورة الفيديو إذا تمت مشاهدته
         if (watched) {
             val dim = View(this)
             dim.setBackgroundColor(Color.parseColor("#99000000"))
@@ -978,7 +971,6 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (watched) {
-            // كلمة "تم المشاهدة" في منتصف إطار الفيديو
             val tg = TextView(this)
             tg.text = "تم المشاهدة"
             tg.setTextColor(Color.WHITE)
@@ -992,7 +984,6 @@ class MainActivity : AppCompatActivity() {
             tg.setPadding(dp(14), dp(6), dp(14), dp(6))
             f.addView(tg, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
         } else if (pos > 0 && dur > 0 && pos < dur - 3000) {
-            // الوقت المتبقي أعلى اليمين للفيديو غير المكتمل
             val tg = TextView(this)
             tg.text = "-" + fmt(dur - pos)
             tg.setTextColor(Color.WHITE)
@@ -1071,7 +1062,6 @@ class MainActivity : AppCompatActivity() {
         surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(h: SurfaceHolder) {
                 player?.setVideoSurfaceView(surfaceView)
-                // إصلاح: إذا كان هناك فيديو ينتظر جاهزية السطح، نبدأه الآن
                 val waiting = pending
                 if (waiting != null && player == null) {
                     pending = null
@@ -1131,7 +1121,6 @@ class MainActivity : AppCompatActivity() {
 
         val btnRow = LinearLayout(this); btnRow.orientation = LinearLayout.HORIZONTAL; btnRow.gravity = Gravity.CENTER
 
-        // زر التشغيل (بلون أحمر وأيقونة بيضاء)
         playPause = makePlayerBtn(IconDrawable.PAUSE, Color.parseColor("#FF0000")) {
             try {
                 val p = player
@@ -1139,7 +1128,6 @@ class MainActivity : AppCompatActivity() {
                     if (p.isPlaying) {
                         p.pause(); setPlayIcon(false)
                     } else {
-                        // إصلاح: بعد انتهاء الفيديو نعيده للبداية ثم نشغله
                         if (p.playbackState == Player.STATE_ENDED) {
                             p.seekTo(0L)
                             seekBar.progress = 0
@@ -1155,7 +1143,6 @@ class MainActivity : AppCompatActivity() {
         }
         btnRow.addView(playPause, LinearLayout.LayoutParams(dp(52), dp(52)).apply { setMargins(dp(5), dp(2), dp(5), dp(2)) })
 
-        // زر السرعة (نص داخل دائرة شفافة)
         speedBtn = TextView(this)
         speedBtn.text = "1x"
         speedBtn.setTextColor(Color.WHITE)
@@ -1165,7 +1152,6 @@ class MainActivity : AppCompatActivity() {
         val speedBg = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.parseColor("#33FFFFFF")) }
         speedBtn.background = speedBg
         speedBtn.setOnClickListener { speedIdx = (speedIdx + 1) % speeds.size; applySpeed(); showHud("السرعة " + fmtSpeed(speeds[speedIdx])) }
-        // إضافة تأثير اللمس
         speedBtn.setOnTouchListener { view, e ->
             when (e.action) {
                 MotionEvent.ACTION_DOWN -> view.animate().scaleX(0.85f).scaleY(0.85f).setDuration(100).start()
@@ -1175,7 +1161,6 @@ class MainActivity : AppCompatActivity() {
         }
         btnRow.addView(speedBtn, LinearLayout.LayoutParams(dp(48), dp(48)).apply { setMargins(dp(5), dp(2), dp(5), dp(2)) })
 
-        // باقي الأزرار الدائرية الشفافة
         btnRow.addView(makePlayerBtn(IconDrawable.LOCK) { setLocked(true) }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { setMargins(dp(5), 0, dp(5), 0) })
 
         if (Build.VERSION.SDK_INT >= 26 && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
@@ -1313,8 +1298,6 @@ class MainActivity : AppCompatActivity() {
                         seekBar.max = dur.toInt()
                     }
                     if (speedIdx != 2) applySpeed()
-                    // ملاحظة: موضع الاستئناف يُحدَّد قبل prepare() ولا نقفز مرة أخرى هنا،
-                    // لأن STATE_READY يتكرر بعد كل تقديم/تأخير وكان يرجع الفيديو للموضع القديم.
                 } else if (playbackState == Player.STATE_ENDED) {
                     prepared = true
                     val dur = exoPlayer.duration
@@ -1338,7 +1321,6 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
-        // موضع الاستئناف: نحدده قبل التحضير مرة واحدة فقط
         val saved = prefs.position(v.id)
         val knownDur = if (v.duration > 0) v.duration else prefs.duration(v.id)
         val startPos = if (saved > 0 && (knownDur <= 0 || saved < knownDur - 3000)) saved else 0L
