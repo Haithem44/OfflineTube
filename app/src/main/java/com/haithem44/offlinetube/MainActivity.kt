@@ -168,7 +168,6 @@ class ShimmerView(ctx: Context) : View(ctx) {
 
 class MainActivity : AppCompatActivity() {
 
-    // ===== اسم التطبيق: يُقرأ من strings.xml تلقائيًا =====
     private val appName: String by lazy {
         try { getString(R.string.app_name) } catch (_: Exception) { "TUBE TV PRO" }
     }
@@ -226,7 +225,6 @@ class MainActivity : AppCompatActivity() {
 
     private val cache = object : LruCache<Long, Bitmap>((Runtime.getRuntime().maxMemory() / 1024 / 6).toInt()) {
         override fun sizeOf(key: Long, value: Bitmap): Int = value.byteCount / 1024
-        // ملاحظة: لا نستدعي recycle() لتجنّب انهيار "trying to use a recycled bitmap"
         override fun entryRemoved(evicted: Boolean, key: Long, old: Bitmap, new: Bitmap?) { /* GC يتولى */ }
     }
 
@@ -798,11 +796,6 @@ class MainActivity : AppCompatActivity() {
         if (playerRoot.visibility != View.VISIBLE && folderPath.isNotEmpty()) reloadVideos()
     }
 
-    /**
-     * قراءة الفيديوهات من المجلد المختار.
-     * لا نعتمد على MediaStore.Video.Media.DATA في SQL (غير موثوق على Android 10+)
-     * بل نستعلم كل الفيديوهات ثم نفلتر في Kotlin باستخدام DATA أو RELATIVE_PATH.
-     */
     private fun loadVideos() {
         val folder = folderPath
         if (folder.isEmpty()) { finishRefresh(); return }
@@ -837,7 +830,6 @@ class MainActivity : AppCompatActivity() {
                         val id = c.getLong(iId)
                         var inFolder = false
 
-                        // 1) ابحث في DATA (يعمل غالبًا على كل الإصدارات)
                         if (iData >= 0) {
                             val data = c.getString(iData)
                             if (data != null && (data == normFolder || data.startsWith("$normFolder/"))) {
@@ -845,7 +837,6 @@ class MainActivity : AppCompatActivity() {
                             }
                         }
 
-                        // 2) بديل: RELATIVE_PATH (للتخزين الأساسي على Android 10+)
                         if (!inFolder && primaryTarget != null && iRel >= 0) {
                             val rel = c.getString(iRel)?.trimEnd('/') ?: ""
                             if (primaryTarget.isEmpty()) {
@@ -1332,7 +1323,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStop() {
         super.onStop()
-        // احفظ التقدم فقط. لا توقف الفيديو: الوضع المصغّر (PiP) يجب أن يستمر.
         val p = player
         val c = current
         if (p != null && c != null && prepared) {
@@ -1467,10 +1457,6 @@ class MainActivity : AppCompatActivity() {
         fun watched(id: Long): Boolean = sp.getBoolean("w_$id", false)
         fun lastTouched(id: Long): Long = sp.getLong("t_$id", 0L)
 
-        /**
-         * @param ended = true فقط عند إنهاء الفيديو فعليًا (STATE_ENDED)
-         *               حتى لا يُعلَّم كمُشاهَد لمجرد الاقتراب من النهاية.
-         */
         fun savePosition(id: Long, position: Long, duration: Long, ended: Boolean = false) {
             if (duration <= 0) return
             val e = sp.edit().putLong("p_$id", position).putLong("d_$id", duration)
