@@ -10,7 +10,7 @@
         android:allowBackup="true"
         android:icon="@drawable/app_icon"
         android:roundIcon="@drawable/app_icon"
-        android:label="OfflineTube"
+        android:label="TUBE TV PRO"
         android:supportsRtl="true"
         android:theme="@style/Theme.AppCompat.NoActionBar">
 
@@ -28,5 +28,3 @@
         </activity>
 
     </application>
-
-</manifest>
