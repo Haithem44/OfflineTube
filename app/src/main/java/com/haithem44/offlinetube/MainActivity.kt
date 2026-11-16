@@ -92,7 +92,7 @@ class IconDrawable(private val kind: Int, initial: Int) : Drawable() {
         const val HOME = 0; const val SEARCH = 1; const val PLAY = 2; const val REFRESH = 3
         const val FOLDER = 4; const val TRASH = 5; const val BACK = 6; const val LOCK = 7
         const val UNLOCK = 8; const val PAUSE = 9; const val PLAY_FILLED = 10; const val EXPAND = 11
-        const val ROTATE = 12; const val PIP = 13
+        const val ROTATE = 12; const val PIP = 13; const val COMPRESS = 14
     }
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -136,6 +136,7 @@ class IconDrawable(private val kind: Int, initial: Int) : Drawable() {
             EXPAND -> { p.moveTo(4f, 9f); p.lineTo(4f, 4f); p.lineTo(9f, 4f); p.moveTo(15f, 4f); p.lineTo(20f, 4f); p.lineTo(20f, 9f); p.moveTo(20f, 15f); p.lineTo(20f, 20f); p.lineTo(15f, 20f); p.moveTo(9f, 20f); p.lineTo(4f, 20f); p.lineTo(4f, 15f) }
             ROTATE -> { canvas.drawRoundRect(RectF(3f, 6f, 21f, 18f), 2.5f, 2.5f, paint); p.moveTo(18f, 10f); p.lineTo(18f, 14f) }
             PIP -> { canvas.drawRoundRect(RectF(3f, 5f, 21f, 19f), 2f, 2f, paint); paint.style = Paint.Style.FILL; canvas.drawRoundRect(RectF(12f, 11f, 19f, 17f), 1f, 1f, paint); paint.style = Paint.Style.STROKE }
+            COMPRESS -> { p.moveTo(9f, 4f); p.lineTo(9f, 9f); p.lineTo(4f, 9f); p.moveTo(15f, 4f); p.lineTo(15f, 9f); p.lineTo(20f, 9f); p.moveTo(20f, 15f); p.lineTo(15f, 15f); p.lineTo(15f, 20f); p.moveTo(4f, 15f); p.lineTo(9f, 15f); p.lineTo(9f, 20f) }
         }
         canvas.drawPath(p, paint); canvas.restore()
     }
@@ -263,6 +264,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var seekBar: SeekBar
     private lateinit var timeText: TextView
     private lateinit var speedBtn: TextView
+    private lateinit var fsBtn: ImageView
     private lateinit var unlockBtn: ImageView
     private lateinit var hudText: TextView
     private lateinit var gestures: GestureDetector
@@ -1206,7 +1208,18 @@ class MainActivity : AppCompatActivity() {
         })
         seekRow.addView(seekBar, LinearLayout.LayoutParams(0, -2, 1f))
         timeText = TextView(this); timeText.setTextColor(Color.WHITE); timeText.textSize = 12f; timeText.text = "0:00 / 0:00"; timeText.setPadding(dp(6), 0, dp(6), 0)
-        seekRow.addView(timeText); controls.addView(seekRow, LinearLayout.LayoutParams(-1, -2))
+        seekRow.addView(timeText)
+
+        // زر الدخول/الخروج من ملء الشاشة (أسفل يمين الفيديو مثل يوتيوب)
+        fsBtn = ImageView(this)
+        fsBtn.scaleType = ImageView.ScaleType.FIT_CENTER
+        fsBtn.setImageDrawable(IconDrawable(IconDrawable.EXPAND, Color.WHITE))
+        fsBtn.setPadding(dp(8), dp(8), dp(8), dp(8))
+        fsBtn.contentDescription = "ملء الشاشة"
+        fsBtn.setOnClickListener { toggleFullscreen() }
+        seekRow.addView(fsBtn, LinearLayout.LayoutParams(dp(42), dp(42)))
+
+        controls.addView(seekRow, LinearLayout.LayoutParams(-1, -2))
 
         val btnRow = LinearLayout(this); btnRow.orientation = LinearLayout.HORIZONTAL; btnRow.gravity = Gravity.CENTER
 
@@ -1265,8 +1278,6 @@ class MainActivity : AppCompatActivity() {
                 showHud("عرض كامل الفيديو")
             }
         }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { setMargins(dp(5), 0, dp(5), 0) })
-
-        btnRow.addView(makePlayerBtn(IconDrawable.ROTATE) { toggleFullscreen() }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { setMargins(dp(5), 0, dp(5), 0) })
 
         controls.addView(btnRow, LinearLayout.LayoutParams(-1, -2))
         playerRoot.addView(controls, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
@@ -1376,6 +1387,7 @@ class MainActivity : AppCompatActivity() {
                 videoH = videoSize.height
                 if (videoW > videoH && !isLandscape) {
                     isLandscape = true
+                    updateFsIcon()
                     requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                 }
             }
@@ -1422,8 +1434,13 @@ class MainActivity : AppCompatActivity() {
         exoPlayer.prepare()
     }
 
+    private fun updateFsIcon() {
+        fsBtn.setImageDrawable(IconDrawable(if (isLandscape) IconDrawable.COMPRESS else IconDrawable.EXPAND, Color.WHITE))
+    }
+
     private fun toggleFullscreen() {
         isLandscape = !isLandscape
+        updateFsIcon()
         requestedOrientation = if (isLandscape) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
     }
 
@@ -1442,7 +1459,7 @@ class MainActivity : AppCompatActivity() {
         releasePlayer(); current = null; pending = null; videoW = 0; videoH = 0; locked = false; speedIdx = 2
         ui.removeCallbacks(hideHud); ui.removeCallbacks(hideUnlock); hudText.visibility = View.GONE; unlockBtn.visibility = View.GONE
         val lp = window.attributes; lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE; window.attributes = lp
-        playerRoot.visibility = View.GONE; isLandscape = false; requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED; hideSystemBars(false); refresh()
+        playerRoot.visibility = View.GONE; isLandscape = false; updateFsIcon(); requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED; hideSystemBars(false); refresh()
     }
 
     private fun releasePlayer() {
