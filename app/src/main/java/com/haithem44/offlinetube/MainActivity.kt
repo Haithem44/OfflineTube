@@ -122,10 +122,14 @@ class IconDrawable(private val kind: Int, initial: Int) : Drawable() {
             REFRESH -> { canvas.drawArc(RectF(4f, 4f, 20f, 20f), 25f, 300f, false, paint); p.moveTo(18.5f, 2.5f); p.lineTo(18.5f, 7.5f); p.lineTo(13.5f, 7.5f) }
             FOLDER -> { p.moveTo(3f, 6f); p.lineTo(9f, 6f); p.lineTo(11f, 8f); p.lineTo(21f, 8f); p.lineTo(21f, 19f); p.lineTo(3f, 19f); p.close() }
             TRASH -> {
-                p.moveTo(4f, 7f); p.lineTo(20f, 7f)
-                p.moveTo(10f, 7f); p.lineTo(10f, 4f); p.lineTo(14f, 4f); p.lineTo(14f, 7f)
-                p.moveTo(6.5f, 7f); p.lineTo(7.5f, 20f); p.lineTo(16.5f, 20f); p.lineTo(17.5f, 7f)
-                p.moveTo(10f, 11f); p.lineTo(10f, 16f); p.moveTo(14f, 11f); p.lineTo(14f, 16f)
+                // غطاء السلة + المقبض
+                p.moveTo(3.5f, 6f); p.lineTo(20.5f, 6f)
+                p.moveTo(9f, 6f); p.lineTo(9f, 4.5f); p.quadTo(9f, 3.5f, 10f, 3.5f); p.lineTo(14f, 3.5f); p.quadTo(15f, 3.5f, 15f, 4.5f); p.lineTo(15f, 6f)
+                // جسم السلة بحواف مستديرة
+                p.moveTo(5.5f, 6f); p.lineTo(6.4f, 19.2f); p.quadTo(6.5f, 20.5f, 7.8f, 20.5f); p.lineTo(16.2f, 20.5f); p.quadTo(17.5f, 20.5f, 17.6f, 19.2f); p.lineTo(18.5f, 6f)
+                // الخطان الداخليان
+                p.moveTo(10f, 10f); p.lineTo(10f, 16.5f)
+                p.moveTo(14f, 10f); p.lineTo(14f, 16.5f)
             }
             BACK -> { p.moveTo(20f, 12f); p.lineTo(4f, 12f); p.moveTo(10f, 6f); p.lineTo(4f, 12f); p.lineTo(10f, 18f) }
             LOCK -> { canvas.drawRoundRect(RectF(5f, 11f, 19f, 21f), 2f, 2f, paint); p.moveTo(8f, 11f); p.lineTo(8f, 8f); p.arcTo(RectF(8f, 4f, 16f, 12f), 180f, 180f); p.lineTo(16f, 11f) }
@@ -386,6 +390,9 @@ class MainActivity : AppCompatActivity() {
 
         listView = ListView(this)
         listView.divider = null
+        listView.dividerHeight = 0
+        listView.setPadding(0, 0, 0, 0)
+        listView.clipToPadding = false
         listView.setBackgroundColor(bg)
 
         continueHeader = LinearLayout(this)
@@ -863,14 +870,13 @@ class MainActivity : AppCompatActivity() {
         // الصورة بعرض الشاشة كاملاً بدون حواف جانبية (مثل يوتيوب)
         val w = screenW(); val th = w * 9 / 16
         val box = LinearLayout(this); box.orientation = LinearLayout.VERTICAL
-
-        box.setPadding(0, 0, 0, dp(10))
+        box.setPadding(0, 0, 0, dp(6))
 
         val card = LinearLayout(this); card.orientation = LinearLayout.VERTICAL
         card.setBackgroundColor(bg)
         box.addView(card, LinearLayout.LayoutParams(-1, -2))
 
-        card.addView(thumbFrame(v, w, th), LinearLayout.LayoutParams(w, th))
+        card.addView(thumbFrame(v, w, th), LinearLayout.LayoutParams(-1, th))
 
         val row = LinearLayout(this); row.orientation = LinearLayout.HORIZONTAL; row.gravity = Gravity.CENTER_VERTICAL
         row.setPadding(dp(12), dp(8), dp(8), dp(8))
@@ -882,28 +888,30 @@ class MainActivity : AppCompatActivity() {
 
         val trash = ImageView(this)
         trash.scaleType = ImageView.ScaleType.FIT_CENTER
-        trash.setImageDrawable(IconDrawable(IconDrawable.TRASH, Color.parseColor("#EEEEEE")))
-        trash.setPadding(dp(8), dp(8), dp(8), dp(8))
+        trash.setImageDrawable(IconDrawable(IconDrawable.TRASH, Color.parseColor("#FF8A80")))
+        trash.setPadding(dp(5), dp(5), dp(5), dp(5))
         trash.isFocusable = false
         trash.contentDescription = "حذف"
         trash.setOnClickListener { confirmDelete(v) }
 
         val trashBg = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(Color.parseColor("#1AFFFFFF"))
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dp(8).toFloat()
+            setColor(Color.parseColor("#1AFF5252"))
+            setStroke(dp(1), Color.parseColor("#33FF5252"))
         }
         trash.background = trashBg
 
-        row.addView(trash, LinearLayout.LayoutParams(dp(32), dp(32)).apply {
-            setMargins(dp(8), 0, dp(4), 0)
+        row.addView(trash, LinearLayout.LayoutParams(dp(28), dp(28)).apply {
+            setMargins(dp(8), 0, dp(6), 0)
         })
 
         val dots = TextView(this)
         dots.text = "•••"
         dots.setTextColor(Color.WHITE)
-        dots.textSize = 14f
+        dots.textSize = 12f
         dots.gravity = Gravity.CENTER
-        dots.setPadding(dp(8), dp(4), dp(8), dp(8))
+        dots.setPadding(0, 0, 0, 0)
         dots.isFocusable = false
         dots.contentDescription = "خيارات"
         dots.setOnClickListener {
@@ -914,13 +922,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         val dotsBg = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dp(8).toFloat()
             setColor(Color.parseColor("#1AFFFFFF"))
         }
         dots.background = dotsBg
 
-        row.addView(dots, LinearLayout.LayoutParams(dp(32), dp(32)).apply {
-            setMargins(dp(4), 0, 0, 0)
+        row.addView(dots, LinearLayout.LayoutParams(dp(28), dp(28)).apply {
+            setMargins(dp(0), 0, 0, 0)
         })
 
         card.addView(row); applyFont(box)
@@ -930,7 +939,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun thumbFrame(v: VideoItem, w: Int, h: Int): FrameLayout {
-        val f = FrameLayout(this); f.setBackgroundColor(Color.parseColor("#222222")); f.layoutParams = ViewGroup.LayoutParams(w, h)
+        val f = FrameLayout(this); f.setBackgroundColor(Color.BLACK); f.setPadding(0, 0, 0, 0); f.layoutParams = ViewGroup.LayoutParams(-1, h)
         val shimmer = ShimmerView(this); f.addView(shimmer, FrameLayout.LayoutParams(-1, -1))
         val iv = ImageView(this); iv.scaleType = ImageView.ScaleType.CENTER_CROP; f.addView(iv, FrameLayout.LayoutParams(-1, -1)); loadThumb(v, iv, shimmer)
 
