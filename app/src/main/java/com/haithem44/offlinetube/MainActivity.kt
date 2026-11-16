@@ -168,8 +168,10 @@ class ShimmerView(ctx: Context) : View(ctx) {
 
 class MainActivity : AppCompatActivity() {
 
-    // ===== اسم التطبيق: غيّره هنا فقط =====
-    private val appName = "TUBE TV PRO"
+    // ===== اسم التطبيق: يُقرأ من strings.xml تلقائيًا =====
+    private val appName: String by lazy {
+        try { getString(R.string.app_name) } catch (_: Exception) { "TUBE TV PRO" }
+    }
 
     private lateinit var prefs: Prefs
     private val bg = Color.parseColor("#0F0F0F")
@@ -201,6 +203,7 @@ class MainActivity : AppCompatActivity() {
     private var pendingDelete: VideoItem? = null
     private var deleteNeedsRetry = false
     private var pendingOpenId: Long = -1L
+    private var observerRegistered = false
 
     private val tabNames = arrayOf("الصفحة الرئيسية", "تابع المشاهدة", "الأطول", "تمت المشاهدة", "Shorts")
     private val tabTexts = ArrayList<TextView>()
@@ -223,7 +226,8 @@ class MainActivity : AppCompatActivity() {
 
     private val cache = object : LruCache<Long, Bitmap>((Runtime.getRuntime().maxMemory() / 1024 / 6).toInt()) {
         override fun sizeOf(key: Long, value: Bitmap): Int = value.byteCount / 1024
-        override fun entryRemoved(evicted: Boolean, key: Long, old: Bitmap, new: Bitmap?) { if (evicted) old.recycle() }
+        // ملاحظة: لا نستدعي recycle() لتجنّب انهيار "trying to use a recycled bitmap"
+        override fun entryRemoved(evicted: Boolean, key: Long, old: Bitmap, new: Bitmap?) { /* GC يتولى */ }
     }
 
     private val thumbW: Int by lazy { maxOf(resources.displayMetrics.widthPixels, 1080).coerceAtMost(2160) }
@@ -289,8 +293,9 @@ class MainActivity : AppCompatActivity() {
         try {
             val dur = p.duration
             if (dur == C.TIME_UNSET || dur <= 0) return
-            val pos = if (p.playbackState == Player.STATE_ENDED) 0L else p.currentPosition
-            prefs.savePosition(c.id, pos, dur)
+            val ended = p.playbackState == Player.STATE_ENDED
+            val pos = if (ended) 0L else p.currentPosition
+            prefs.savePosition(c.id, pos, dur, ended)
         } catch (_: Exception) {}
     }
 
@@ -301,14 +306,12 @@ class MainActivity : AppCompatActivity() {
                 try {
                     val pos = p.currentPosition
                     val dur = p.duration
-
                     if (dur != C.TIME_UNSET && dur > 0) {
                         if (!userSeeking) {
                             seekBar.max = dur.toInt()
                             seekBar.progress = pos.toInt()
                         }
                         timeText.text = fmt(pos) + " / " + fmt(dur)
-
                         val now = System.currentTimeMillis()
                         if (now - lastSaveTime > 5000) {
                             current?.let { saveProgress(p, it) }
@@ -463,9 +466,7 @@ class MainActivity : AppCompatActivity() {
         current?.let { c ->
             outState.putLong("current_id", c.id)
             val p = player
-            if (p != null && prepared) {
-                saveProgress(p, c)
-            }
+            if (p != null && prepared) saveProgress(p, c)
         }
     }
 
@@ -529,11 +530,11 @@ class MainActivity : AppCompatActivity() {
         b.setImageDrawable(IconDrawable(kind, Color.WHITE))
         b.setPadding(dp(12), dp(12), dp(12), dp(12))
 
-        val bg = GradientDrawable().apply {
+        val bgd = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
             setColor(bgColor)
         }
-        b.background = bg
+        b.background = bgd
         b.setOnClickListener { onClick() }
 
         b.setOnTouchListener { view, e ->
@@ -683,6 +684,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refresh() {
+        if (animatedIds.size > 3000) animatedIds.clear()
         val s = query.trim().lowercase()
         var list: List<VideoItem> = all.filter { s.isEmpty() || it.title.lowercase().contains(s) }
         list = when (tab) {
@@ -751,18 +753,41 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun checkPermissionAndLoad() {
-        val perm = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_VIDEO else Manifest.permission.READ_EXTERNAL_STORAGE
-        if (checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED) { startLoad(); registerMediaObserver() }
-        else { requestPermissions(arrayOf(perm), 1) }
+        val granted = when {
+            Build.VERSION.SDK_INT >= 34 ->
+                checkSelfPermission(Manifest.permission.READ_MEDIA_VIDEO) == PackageManager.PERMISSION_GRANTED ||
+                checkSelfPermission(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) == PackageManager.PERMISSION_GRANTED
+            Build.VERSION.SDK_INT >= 33 ->
+                checkSelfPermission(Manifest.permission.READ_MEDIA_VIDEO) == PackageManager.PERMISSION_GRANTED
+            else ->
+                checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+        }
+        if (granted) { startLoad(); registerMediaObserver() }
+        else {
+            val perms = when {
+                Build.VERSION.SDK_INT >= 34 -> arrayOf(
+                    Manifest.permission.READ_MEDIA_VIDEO,
+                    Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+                )
+                Build.VERSION.SDK_INT >= 33 -> arrayOf(Manifest.permission.READ_MEDIA_VIDEO)
+                else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+            }
+            requestPermissions(perms, 1)
+        }
     }
 
     override fun onRequestPermissionsResult(code: Int, perms: Array<out String>, res: IntArray) {
         super.onRequestPermissionsResult(code, perms, res)
-        if (res.isNotEmpty() && res[0] == PackageManager.PERMISSION_GRANTED) { startLoad(); registerMediaObserver() }
+        val anyGranted = res.any { it == PackageManager.PERMISSION_GRANTED }
+        if (anyGranted) { startLoad(); registerMediaObserver() }
     }
 
     private fun registerMediaObserver() {
-        try { contentResolver.registerContentObserver(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true, mediaObserver) } catch (_: Exception) {}
+        if (observerRegistered) return
+        try {
+            contentResolver.registerContentObserver(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true, mediaObserver)
+            observerRegistered = true
+        } catch (_: Exception) {}
     }
 
     private fun startLoad() { if (folderPath.isEmpty()) pickFolder() else reloadVideos() }
@@ -773,19 +798,66 @@ class MainActivity : AppCompatActivity() {
         if (playerRoot.visibility != View.VISIBLE && folderPath.isNotEmpty()) reloadVideos()
     }
 
+    /**
+     * قراءة الفيديوهات من المجلد المختار.
+     * لا نعتمد على MediaStore.Video.Media.DATA في SQL (غير موثوق على Android 10+)
+     * بل نستعلم كل الفيديوهات ثم نفلتر في Kotlin باستخدام DATA أو RELATIVE_PATH.
+     */
     private fun loadVideos() {
-        val folder = folderPath; if (folder.isEmpty()) { finishRefresh(); return }
+        val folder = folderPath
+        if (folder.isEmpty()) { finishRefresh(); return }
         pool.execute {
             val list = ArrayList<VideoItem>()
-            val proj = arrayOf(MediaStore.Video.Media._ID, MediaStore.Video.Media.DISPLAY_NAME, MediaStore.Video.Media.DURATION)
-            val esc = folder.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            val sel = MediaStore.Video.Media.DATA + " LIKE ? ESCAPE '\\'"
-            val args = arrayOf("$esc/%")
+            val proj = arrayOf(
+                MediaStore.Video.Media._ID,
+                MediaStore.Video.Media.DISPLAY_NAME,
+                MediaStore.Video.Media.DURATION
+            )
             try {
-                contentResolver.query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, proj, sel, args, MediaStore.Video.Media.DATE_ADDED + " DESC")?.use { c ->
-                    val iId = c.getColumnIndexOrThrow(MediaStore.Video.Media._ID); val iName = c.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME); val iDur = c.getColumnIndexOrThrow(MediaStore.Video.Media.DURATION)
+                contentResolver.query(
+                    MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                    proj, null, null,
+                    MediaStore.Video.Media.DATE_ADDED + " DESC"
+                )?.use { c ->
+                    val iId = c.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
+                    val iName = c.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME)
+                    val iDur = c.getColumnIndexOrThrow(MediaStore.Video.Media.DURATION)
+
+                    @Suppress("DEPRECATION")
+                    val iData = c.getColumnIndex(MediaStore.Video.Media.DATA)
+                    val iRel = if (Build.VERSION.SDK_INT >= 29) c.getColumnIndex(MediaStore.Video.Media.RELATIVE_PATH) else -1
+
+                    val normFolder = folder.trimEnd('/')
+                    val primaryBase = Environment.getExternalStorageDirectory().absolutePath.trimEnd('/')
+                    val primaryTarget: String? = if (normFolder.startsWith(primaryBase)) {
+                        normFolder.substring(primaryBase.length).trimStart('/')
+                    } else null
+
                     while (c.moveToNext()) {
-                        val id = c.getLong(iId); val name = (c.getString(iName) ?: "video").substringBeforeLast('.')
+                        val id = c.getLong(iId)
+                        var inFolder = false
+
+                        // 1) ابحث في DATA (يعمل غالبًا على كل الإصدارات)
+                        if (iData >= 0) {
+                            val data = c.getString(iData)
+                            if (data != null && (data == normFolder || data.startsWith("$normFolder/"))) {
+                                inFolder = true
+                            }
+                        }
+
+                        // 2) بديل: RELATIVE_PATH (للتخزين الأساسي على Android 10+)
+                        if (!inFolder && primaryTarget != null && iRel >= 0) {
+                            val rel = c.getString(iRel)?.trimEnd('/') ?: ""
+                            if (primaryTarget.isEmpty()) {
+                                inFolder = true
+                            } else if (rel == primaryTarget || rel.startsWith("$primaryTarget/")) {
+                                inFolder = true
+                            }
+                        }
+
+                        if (!inFolder) continue
+
+                        val name = (c.getString(iName) ?: "video").substringBeforeLast('.')
                         val uri = Uri.withAppendedPath(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id.toString())
                         list.add(VideoItem(id, name, c.getLong(iDur), uri))
                     }
@@ -1260,9 +1332,11 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStop() {
         super.onStop()
-        if (Build.VERSION.SDK_INT >= 24 && isInPictureInPictureMode) {
-            try { val p = player; if (p != null && prepared && p.isPlaying) p.pause() } catch (_: Exception) {}
-            setPlayIcon(false)
+        // احفظ التقدم فقط. لا توقف الفيديو: الوضع المصغّر (PiP) يجب أن يستمر.
+        val p = player
+        val c = current
+        if (p != null && c != null && prepared) {
+            saveProgress(p, c)
         }
     }
 
@@ -1302,8 +1376,7 @@ class MainActivity : AppCompatActivity() {
                     prepared = true
                     val dur = exoPlayer.duration
                     if (dur != C.TIME_UNSET && dur > 0) {
-                        prefs.savePosition(v.id, 0L, dur)
-                        prefs.markWatched(v.id)
+                        prefs.savePosition(v.id, 0L, dur, ended = true)
                         seekBar.max = dur.toInt()
                         seekBar.progress = dur.toInt()
                     }
@@ -1364,7 +1437,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         ui.removeCallbacks(ticker); ui.removeCallbacks(hideHud); ui.removeCallbacks(hideUnlock)
-        try { contentResolver.unregisterContentObserver(mediaObserver) } catch (_: Exception) {}
+        if (observerRegistered) {
+            try { contentResolver.unregisterContentObserver(mediaObserver) } catch (_: Exception) {}
+            observerRegistered = false
+        }
         releasePlayer(); pool.shutdown(); super.onDestroy()
     }
 
@@ -1380,27 +1456,29 @@ class MainActivity : AppCompatActivity() {
 
         var folderPath: String
             get() = sp.getString("folder_path", "") ?: ""
-            set(v) {
-                sp.edit().putString("folder_path", v).apply()
-            }
+            set(v) { sp.edit().putString("folder_path", v).apply() }
 
         var lastTab: Int
             get() = sp.getInt("last_tab", 0)
-            set(v) {
-                sp.edit().putInt("last_tab", v).apply()
-            }
+            set(v) { sp.edit().putInt("last_tab", v).apply() }
 
         fun position(id: Long): Long = sp.getLong("p_$id", 0L)
         fun duration(id: Long): Long = sp.getLong("d_$id", 0L)
         fun watched(id: Long): Boolean = sp.getBoolean("w_$id", false)
         fun lastTouched(id: Long): Long = sp.getLong("t_$id", 0L)
 
-        fun savePosition(id: Long, position: Long, duration: Long) {
+        /**
+         * @param ended = true فقط عند إنهاء الفيديو فعليًا (STATE_ENDED)
+         *               حتى لا يُعلَّم كمُشاهَد لمجرد الاقتراب من النهاية.
+         */
+        fun savePosition(id: Long, position: Long, duration: Long, ended: Boolean = false) {
             if (duration <= 0) return
-
             val e = sp.edit().putLong("p_$id", position).putLong("d_$id", duration)
-            if (duration > 0 && position >= duration - 3000) e.putBoolean("w_$id", true)
-            else if (position > 3000) { e.putBoolean("w_$id", false); e.putLong("t_$id", System.currentTimeMillis()) }
+            if (ended) {
+                e.putBoolean("w_$id", true).putLong("t_$id", System.currentTimeMillis())
+            } else if (position > 3000) {
+                e.putBoolean("w_$id", false).putLong("t_$id", System.currentTimeMillis())
+            }
             e.apply()
         }
 
