@@ -12,7 +12,7 @@
     <uses-feature android:name="android.software.picture_in_picture" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
-    <!-- التطبيق -->
+    <!-- TEUB TV PRO-->
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
