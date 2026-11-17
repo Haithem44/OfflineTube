@@ -61,6 +61,10 @@ import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.LinearInterpolator
 import android.view.inputmethod.InputMethodManager
+import android.webkit.CookieManager
+import android.webkit.WebChromeClient
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.BaseAdapter
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -206,7 +210,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var logo: LinearLayout
     private lateinit var searchBox: EditText
     private lateinit var emptyText: TextView
-    private lateinit var ytPanel: LinearLayout   // [YouTube] لوحة تبويب يوتيوب
+    private lateinit var ytTab: YoutubeTab       // [YouTube]
+    private lateinit var ytPanel: FrameLayout   // [YouTube] لوحة تبويب يوتيوب
     private val YT_TAB = 5                       // [YouTube] رقم تبويب يوتيوب
     private var hasBanner = false
     private var tab = 0
@@ -385,6 +390,8 @@ class MainActivity : AppCompatActivity() {
             override fun handleOnBackPressed() {
                 if (playerRoot.visibility == View.VISIBLE) {
                     if (locked) showUnlockBtn() else closePlayer()
+                } else if (tab == YT_TAB) {
+                    if (!ytTab.handleBack()) selectTab(0)   // [YouTube] رجوع داخل الصفحة ثم للرئيسية
                 } else {
                     isEnabled = false
                     onBackPressedDispatcher.onBackPressed()
@@ -439,9 +446,11 @@ class MainActivity : AppCompatActivity() {
         listView.emptyView = emptyText
 
         // [YouTube] لوحة تبويب يوتيوب فوق القائمة
-        ytPanel = YoutubeTab(this, { folderPath }, { reloadVideos() }).view
+        ytTab = YoutubeTab(this, { folderPath }, { reloadVideos() })
+        ytPanel = ytTab.view
         listFrame.addView(ytPanel, FrameLayout.LayoutParams(-1, -1))
         ytPanel.visibility = if (tab == YT_TAB) View.VISIBLE else View.GONE
+        if (tab == YT_TAB) ytTab.onShown()
 
         refreshBar = TextView(this)
         refreshBar.text = "↻ جارٍ التحديث..."
@@ -672,8 +681,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun selectTab(i: Int) {
+        val prev = tab
         tab = i; prefs.lastTab = i
         ytPanel.visibility = if (i == YT_TAB) View.VISIBLE else View.GONE   // [YouTube]
+        if (i == YT_TAB) ytTab.onShown() else if (prev == YT_TAB) ytTab.onHidden()
         updateTabStyles(); refresh(); listView.setSelection(0)
     }
 
@@ -1493,7 +1504,7 @@ class MainActivity : AppCompatActivity() {
             try { contentResolver.unregisterContentObserver(mediaObserver) } catch (_: Exception) {}
             observerRegistered = false
         }
-        releasePlayer(); pool.shutdown(); super.onDestroy()
+        releasePlayer(); ytTab.destroy(); pool.shutdown(); super.onDestroy()
     }
 
     private fun dp(x: Int) = (x * resources.displayMetrics.density).toInt()
@@ -1576,68 +1587,143 @@ class YoutubeTab(
     companion object {
         const val MAX_COMMENTS = 50
         private var inited = false
+        private const val HOME = "https://m.youtube.com/"
     }
 
-    val view = LinearLayout(act)
-    private val input = EditText(act)
+    val view = FrameLayout(act)
+    private val web = WebView(act)
     private val btn = TextView(act)
     private val status = TextView(act)
     private val bar = ProgressBar(act, null, android.R.attr.progressBarStyleHorizontal)
     private val io = Executors.newSingleThreadExecutor()
     private val ui = Handler(Looper.getMainLooper())
     private var busy = false
+    private var loadedOnce = false
+    private var currentVideoUrl: String? = null
+    private var customView: View? = null
+    private var customCb: WebChromeClient.CustomViewCallback? = null
 
     private fun dp(v: Int) = (v * act.resources.displayMetrics.density).toInt()
 
     init {
         if (!inited) { NewPipe.init(YtDownloader()); inited = true }
 
-        view.orientation = LinearLayout.VERTICAL
         view.setBackgroundColor(Color.parseColor("#0F0F0F"))
-        view.setPadding(dp(16), dp(20), dp(16), dp(16))
-        view.layoutDirection = android.view.View.LAYOUT_DIRECTION_RTL
+        view.layoutDirection = View.LAYOUT_DIRECTION_LTR
         view.isClickable = true
 
-        val title = TextView(act)
-        title.text = "YouTube"; title.setTextColor(Color.WHITE); title.textSize = 20f
-        view.addView(title)
+        // ---- صفحة يوتيوب الحقيقية
+        val st = web.settings
+        st.javaScriptEnabled = true
+        st.domStorageEnabled = true
+        web.setBackgroundColor(Color.parseColor("#0F0F0F"))
+        CookieManager.getInstance().setAcceptCookie(true)
+        web.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(v: WebView, url: String?) { updateButton(url) }
+            override fun doUpdateVisitedHistory(v: WebView, url: String?, isReload: Boolean) { updateButton(url) }
+        }
+        web.webChromeClient = object : WebChromeClient() {
+            override fun onShowCustomView(v: View, cb: WebChromeClient.CustomViewCallback) {
+                if (customView != null) { cb.onCustomViewHidden(); return }
+                v.setBackgroundColor(Color.BLACK)
+                customView = v; customCb = cb
+                (act.window.decorView as FrameLayout).addView(v, FrameLayout.LayoutParams(-1, -1))
+            }
+            override fun onHideCustomView() { hideCustom() }
+        }
+        view.addView(web, FrameLayout.LayoutParams(-1, -1))
 
-        input.hint = "الصق رابط الفيديو هنا"
-        input.setHintTextColor(Color.LTGRAY); input.setTextColor(Color.WHITE)
-        input.isSingleLine = true; input.setPadding(dp(14), dp(10), dp(14), dp(10))
-        input.background = GradientDrawable().apply { setColor(Color.parseColor("#303030")); cornerRadius = dp(14).toFloat() }
-        view.addView(input, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(14) })
+        // ---- شريط تقدّم التنزيل (أعلى)
+        bar.max = 100; bar.visibility = View.GONE
+        view.addView(bar, FrameLayout.LayoutParams(-1, dp(4), Gravity.TOP))
 
-        btn.text = "تنزيل الفيديو + 50 تعليق"
+        // ---- رسالة الحالة
+        status.setTextColor(Color.WHITE); status.textSize = 13f; status.gravity = Gravity.CENTER
+        status.setPadding(dp(14), dp(8), dp(14), dp(8))
+        status.background = GradientDrawable().apply { setColor(Color.parseColor("#CC000000")); cornerRadius = dp(12).toFloat() }
+        status.visibility = View.GONE
+        view.addView(status, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
+            bottomMargin = dp(76); leftMargin = dp(16); rightMargin = dp(16)
+        })
+
+        // ---- زر التنزيل (يظهر فقط داخل صفحة فيديو)
+        btn.text = "⬇ تنزيل الفيديو + 50 تعليق"
         btn.setTextColor(Color.WHITE); btn.textSize = 15f; btn.gravity = Gravity.CENTER
-        btn.setPadding(dp(16), dp(12), dp(16), dp(12))
-        btn.background = GradientDrawable().apply { setColor(Color.parseColor("#FF0000")); cornerRadius = dp(14).toFloat() }
+        btn.typeface = Typeface.DEFAULT_BOLD
+        btn.setPadding(dp(20), dp(12), dp(20), dp(12))
+        btn.background = GradientDrawable().apply { setColor(Color.parseColor("#FF0000")); cornerRadius = dp(26).toFloat() }
+        btn.elevation = dp(8).toFloat()
+        btn.visibility = View.GONE
         btn.setOnClickListener { start() }
-        view.addView(btn, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
-
-        bar.max = 100; bar.visibility = android.view.View.GONE
-        view.addView(bar, LinearLayout.LayoutParams(-1, dp(8)).apply { topMargin = dp(16) })
-
-        status.setTextColor(Color.parseColor("#AAAAAA")); status.textSize = 13f
-        status.setPadding(0, dp(10), 0, 0)
-        view.addView(status)
+        view.addView(btn, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(16) })
     }
 
-    private fun setStatus(s: String) = ui.post { status.text = s }
+    // ---- دورة حياة التبويب
+    fun onShown() {
+        if (!loadedOnce) { loadedOnce = true; web.loadUrl(HOME) } else web.onResume()
+    }
+
+    fun onHidden() {
+        web.evaluateJavascript("document.querySelectorAll('video').forEach(function(v){v.pause()})", null)
+        hideCustom()
+        web.onPause()
+    }
+
+    fun handleBack(): Boolean {
+        if (customView != null) { hideCustom(); return true }
+        if (web.canGoBack()) { web.goBack(); return true }
+        return false
+    }
+
+    fun destroy() {
+        hideCustom()
+        try { web.destroy() } catch (_: Exception) {}
+        io.shutdown()
+    }
+
+    private fun hideCustom() {
+        val v = customView ?: return
+        (act.window.decorView as FrameLayout).removeView(v)
+        customView = null
+        customCb?.onCustomViewHidden(); customCb = null
+    }
+
+    // ---- استخراج رابط الفيديو من الصفحة الحالية
+    private fun videoUrlOf(u: String?): String? {
+        if (u == null || !(u.contains("youtube.com") || u.contains("youtu.be"))) return null
+        val id = Regex("[?&]v=([\\w-]{11})").find(u)?.groupValues?.get(1)
+            ?: Regex("/shorts/([\\w-]{11})").find(u)?.groupValues?.get(1)
+            ?: Regex("youtu\\.be/([\\w-]{11})").find(u)?.groupValues?.get(1)
+        return id?.let { "https://www.youtube.com/watch?v=$it" }
+    }
+
+    private fun updateButton(url: String?) {
+        currentVideoUrl = videoUrlOf(url)
+        btn.visibility = if (currentVideoUrl != null) View.VISIBLE else View.GONE
+    }
+
+    private fun setStatus(s: String, autoHide: Boolean = false) {
+        ui.post {
+            status.text = s; status.visibility = View.VISIBLE
+            if (autoHide) ui.postDelayed({ status.visibility = View.GONE }, 4000)
+        }
+    }
 
     private fun start() {
         if (busy) return
-        val url = input.text.toString().trim()
-        if (url.isEmpty()) { Toast.makeText(act, "ألصق الرابط أولاً", Toast.LENGTH_SHORT).show(); return }
-        if (folder().isEmpty()) { Toast.makeText(act, "اختر مجلد الفيديوهات أولاً (زر المجلد)", Toast.LENGTH_LONG).show(); return }
+        val url = currentVideoUrl
+        if (url == null) { Toast.makeText(act, "افتح فيديو أولاً", Toast.LENGTH_SHORT).show(); return }
+        if (folder().isEmpty()) {
+            Toast.makeText(act, "اختر مجلد الفيديوهات أولاً (زر المجلد)", Toast.LENGTH_LONG).show(); return
+        }
         busy = true; btn.alpha = 0.5f
-        bar.visibility = android.view.View.VISIBLE; bar.progress = 0
+        bar.visibility = View.VISIBLE; bar.progress = 0
+        web.evaluateJavascript("document.querySelectorAll('video').forEach(function(v){v.pause()})", null)
         io.execute {
             try {
                 setStatus("جارٍ جلب معلومات الفيديو...")
                 val info = StreamInfo.getInfo(ServiceList.YouTube, url)
 
-                // أفضل جودة تحتوي صوت وصورة معاً (progressive)
                 val stream = info.videoStreams
                     .filter { it.isUrl }
                     .maxByOrNull { Regex("\\d+").find(it.resolution)?.value?.toIntOrNull() ?: 0 }
@@ -1652,12 +1738,12 @@ class YoutubeTab(
                 val comments = try { fetchComments(url) } catch (e: Exception) { emptyList() }
                 saveComments(mediaId, title, comments)
 
-                setStatus("✓ تم تنزيل الفيديو و ${comments.size} تعليق")
+                setStatus("✓ تم تنزيل الفيديو و ${comments.size} تعليق", true)
                 ui.post { onDone() }
             } catch (e: Exception) {
                 setStatus("✗ فشل: ${e.message ?: e.javaClass.simpleName}")
             } finally {
-                ui.post { busy = false; btn.alpha = 1f; bar.visibility = android.view.View.GONE }
+                ui.post { busy = false; btn.alpha = 1f; bar.visibility = View.GONE }
             }
         }
     }
