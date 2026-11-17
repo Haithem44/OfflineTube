@@ -32,7 +32,11 @@ import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
 import android.media.AudioManager
+import android.media.MediaCodec
+import android.media.MediaExtractor
+import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
+import android.media.MediaMuxer
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
@@ -91,6 +95,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
@@ -105,7 +110,10 @@ import org.schabi.newpipe.extractor.comments.CommentsInfoItem
 import org.schabi.newpipe.extractor.downloader.Downloader
 import org.schabi.newpipe.extractor.downloader.Request
 import org.schabi.newpipe.extractor.downloader.Response
+import org.schabi.newpipe.extractor.MediaFormat as NpFormat
+import org.schabi.newpipe.extractor.stream.AudioStream
 import org.schabi.newpipe.extractor.stream.StreamInfo
+import org.schabi.newpipe.extractor.stream.VideoStream
 
 data class VideoItem(val id: Long, val title: String, val duration: Long, val uri: Uri)
 
@@ -451,7 +459,7 @@ class MainActivity : AppCompatActivity() {
         listView.emptyView = emptyText
 
         // [YouTube] لوحة تبويب يوتيوب فوق القائمة
-        ytTab = YoutubeTab(this, { folderPath }, { reloadVideos() })
+        ytTab = YoutubeTab(this, { folderPath }, { reloadVideos() }, { openPlayer(it) })
         ytPanel = ytTab.view
         listFrame.addView(ytPanel, FrameLayout.LayoutParams(-1, -1))
         ytPanel.visibility = if (tab == YT_TAB) View.VISIBLE else View.GONE
@@ -1642,22 +1650,31 @@ class YtDownloader : Downloader() {
 class YoutubeTab(
     private val act: AppCompatActivity,
     private val folder: () -> String,
-    private val onDone: () -> Unit
+    private val onDone: () -> Unit,
+    private val onOpen: (VideoItem) -> Unit
 ) {
     companion object {
         const val MAX_COMMENTS = 50
         private var inited = false
         private const val HOME = "https://m.youtube.com/"
+        private const val UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0"
+        private const val CHUNK = 4L * 1024 * 1024
+        private const val BTN_TEXT = "⬇ تنزيل الفيديو + 50 تعليق"
     }
+
+    private class Option(val label: String, val video: VideoStream, val audio: AudioStream?, val height: Int)
+    private class Cancelled : Exception()
 
     val view = FrameLayout(act)
     private val web = WebView(act)
     private val btn = TextView(act)
+    private val btnBg = GradientDrawable()
     private val status = TextView(act)
     private val bar = ProgressBar(act, null, android.R.attr.progressBarStyleHorizontal)
     private val io = Executors.newSingleThreadExecutor()
     private val ui = Handler(Looper.getMainLooper())
-    private var busy = false
+    @Volatile private var busy = false
+    @Volatile private var cancelled = false
     private var loadedOnce = false
     private var currentVideoUrl: String? = null
     private var customView: View? = null
@@ -1683,11 +1700,14 @@ class YoutubeTab(
             override fun doUpdateVisitedHistory(v: WebView, url: String?, isReload: Boolean) { updateButton(url) }
         }
         web.webChromeClient = object : WebChromeClient() {
+            // ملء الشاشة مثل يوتيوب: بدون حواف ولا أشرطة، وبوضع أفقي
             override fun onShowCustomView(v: View, cb: WebChromeClient.CustomViewCallback) {
                 if (customView != null) { cb.onCustomViewHidden(); return }
                 v.setBackgroundColor(Color.BLACK)
                 customView = v; customCb = cb
                 (act.window.decorView as FrameLayout).addView(v, FrameLayout.LayoutParams(-1, -1))
+                act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                setImmersive(true)
             }
             override fun onHideCustomView() { hideCustom() }
         }
@@ -1706,19 +1726,20 @@ class YoutubeTab(
             bottomMargin = dp(76); leftMargin = dp(16); rightMargin = dp(16)
         })
 
-        // ---- زر التنزيل (يظهر فقط داخل صفحة فيديو)
-        btn.text = "⬇ تنزيل الفيديو + 50 تعليق"
+        // ---- زر التنزيل / الإلغاء
+        btn.text = BTN_TEXT
         btn.setTextColor(Color.WHITE); btn.textSize = 15f; btn.gravity = Gravity.CENTER
         btn.typeface = Typeface.DEFAULT_BOLD
         btn.setPadding(dp(20), dp(12), dp(20), dp(12))
-        btn.background = GradientDrawable().apply { setColor(Color.parseColor("#FF0000")); cornerRadius = dp(26).toFloat() }
+        btnBg.setColor(Color.parseColor("#FF0000")); btnBg.cornerRadius = dp(26).toFloat()
+        btn.background = btnBg
         btn.elevation = dp(8).toFloat()
         btn.visibility = View.GONE
-        btn.setOnClickListener { start() }
+        btn.setOnClickListener { onButton() }
         view.addView(btn, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(16) })
     }
 
-    // ---- دورة حياة التبويب
+    // ---------------- دورة حياة التبويب ----------------
     fun onShown() {
         if (!loadedOnce) { loadedOnce = true; web.loadUrl(HOME) } else web.onResume()
     }
@@ -1736,9 +1757,20 @@ class YoutubeTab(
     }
 
     fun destroy() {
+        cancelled = true
         hideCustom()
         try { web.destroy() } catch (_: Exception) {}
         io.shutdown()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun setImmersive(on: Boolean) {
+        act.window.decorView.systemUiVisibility = if (on) {
+            View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+        } else View.SYSTEM_UI_FLAG_VISIBLE
+        if (on) act.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else act.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
 
     private fun hideCustom() {
@@ -1746,9 +1778,11 @@ class YoutubeTab(
         (act.window.decorView as FrameLayout).removeView(v)
         customView = null
         customCb?.onCustomViewHidden(); customCb = null
+        act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        setImmersive(false)
     }
 
-    // ---- استخراج رابط الفيديو من الصفحة الحالية
+    // ---------------- رابط الفيديو الحالي ----------------
     private fun videoUrlOf(u: String?): String? {
         if (u == null || !(u.contains("youtube.com") || u.contains("youtu.be"))) return null
         val id = Regex("[?&]v=([\\w-]{11})").find(u)?.groupValues?.get(1)
@@ -1759,55 +1793,279 @@ class YoutubeTab(
 
     private fun updateButton(url: String?) {
         currentVideoUrl = videoUrlOf(url)
-        btn.visibility = if (currentVideoUrl != null) View.VISIBLE else View.GONE
+        btn.visibility = if (busy || currentVideoUrl != null) View.VISIBLE else View.GONE
     }
 
     private fun setStatus(s: String, autoHide: Boolean = false) {
         ui.post {
+            status.setOnClickListener(null); status.isClickable = false
             status.text = s; status.visibility = View.VISIBLE
             if (autoHide) ui.postDelayed({ status.visibility = View.GONE }, 4000)
         }
     }
 
-    private fun start() {
-        if (busy) return
+    private fun setBusyUi(on: Boolean) {
+        busy = on
+        btn.text = if (on) "✕ إلغاء التنزيل" else BTN_TEXT
+        btnBg.setColor(Color.parseColor(if (on) "#555555" else "#FF0000"))
+        btn.visibility = if (on || currentVideoUrl != null) View.VISIBLE else View.GONE
+        bar.visibility = if (on) View.VISIBLE else View.GONE
+        if (on) bar.progress = 0
+        view.keepScreenOn = on
+    }
+
+    private fun finishUi() { ui.post { setBusyUi(false) } }
+
+    private fun fail(e: Throwable) {
+        if (e is Cancelled) setStatus("تم إلغاء التنزيل", true)
+        else setStatus("✗ فشل: ${e.message ?: e.javaClass.simpleName}")
+    }
+
+    // ---------------- الضغط على الزر ----------------
+    private fun onButton() {
+        if (busy) { cancelled = true; setStatus("جارٍ الإلغاء..."); return }
         val url = currentVideoUrl
         if (url == null) { Toast.makeText(act, "افتح فيديو أولاً", Toast.LENGTH_SHORT).show(); return }
         if (folder().isEmpty()) {
             Toast.makeText(act, "اختر مجلد الفيديوهات أولاً (زر المجلد)", Toast.LENGTH_LONG).show(); return
         }
-        busy = true; btn.alpha = 0.5f
-        bar.visibility = View.VISIBLE; bar.progress = 0
+        cancelled = false
+        setBusyUi(true)
         web.evaluateJavascript("document.querySelectorAll('video').forEach(function(v){v.pause()})", null)
         io.execute {
+            var handedOff = false
             try {
                 setStatus("جارٍ جلب معلومات الفيديو...")
                 val info = StreamInfo.getInfo(ServiceList.YouTube, url)
-
-                val stream = info.videoStreams
-                    .filter { it.isUrl }
-                    .maxByOrNull { Regex("\\d+").find(it.resolution)?.value?.toIntOrNull() ?: 0 }
-                    ?: throw IllegalStateException("لا يوجد رابط تنزيل مباشر لهذا الفيديو")
-
-                val title = info.name.replace(Regex("[\\\\/:*?\"<>|]"), "_").take(100)
-
-                setStatus("جارٍ تنزيل الفيديو (${stream.resolution})...")
-                val mediaId = saveVideo(title, stream.content)
-
-                setStatus("جارٍ جلب التعليقات...")
-                val comments = try { fetchComments(url) } catch (e: Exception) { emptyList() }
-                saveComments(mediaId, title, comments)
-
-                setStatus("✓ تم تنزيل الفيديو و ${comments.size} تعليق", true)
-                ui.post { onDone() }
+                val options = buildOptions(info)
+                if (options.isEmpty()) throw IllegalStateException("لا توجد صيغة قابلة للتنزيل لهذا الفيديو")
+                handedOff = true
+                if (options.size == 1) runDownload(info, url, options[0])
+                else ui.post { askQuality(info, url, options) }
             } catch (e: Exception) {
-                setStatus("✗ فشل: ${e.message ?: e.javaClass.simpleName}")
+                fail(e)
             } finally {
-                ui.post { busy = false; btn.alpha = 1f; bar.visibility = View.GONE }
+                if (!handedOff) finishUi()
             }
         }
     }
 
+    private fun heightOf(res: String?): Int = Regex("\\d+").find(res ?: "")?.value?.toIntOrNull() ?: 0
+
+    /** الجودات المتاحة: صوت+صورة جاهزة، أو صورة فقط + صوت منفصل يُدمجان داخل التطبيق */
+    private fun buildOptions(info: StreamInfo): List<Option> {
+        val map = LinkedHashMap<Int, Option>()
+        for (v in info.videoStreams.filter { it.isUrl }) {
+            val h = heightOf(v.resolution)
+            if (!map.containsKey(h)) map[h] = Option(h.toString() + "p", v, null, h)
+        }
+        val audio = info.audioStreams
+            .filter { it.isUrl && it.format == NpFormat.M4A }
+            .maxByOrNull { it.averageBitrate }
+        if (audio != null) {
+            for (v in info.videoOnlyStreams.filter { it.isUrl && it.format == NpFormat.MPEG_4 }) {
+                val h = heightOf(v.resolution)
+                if (h > 0 && !map.containsKey(h)) map[h] = Option(h.toString() + "p", v, audio, h)
+            }
+        }
+        return map.values.sortedByDescending { it.height }
+    }
+
+    private fun askQuality(info: StreamInfo, url: String, options: List<Option>) {
+        val labels = options.map { it.label }.toTypedArray()
+        AlertDialog.Builder(act)
+            .setTitle("اختر الجودة")
+            .setItems(labels) { _, i -> io.execute { runDownload(info, url, options[i]) } }
+            .setOnCancelListener { fail(Cancelled()); finishUi() }
+            .show()
+    }
+
+    // ---------------- التنزيل ----------------
+    private fun runDownload(info: StreamInfo, url: String, opt: Option) {
+        val title = info.name.replace(Regex("[\\\\/:*?\"<>|]"), "_").take(100)
+        val tmpDir = File(act.cacheDir, "yt_dl").apply { mkdirs() }
+        val vTmp = File(tmpDir, "v.tmp"); val aTmp = File(tmpDir, "a.tmp"); val outTmp = File(tmpDir, "out.mp4")
+        try {
+            val finalFile: File
+            if (opt.audio == null) {
+                fetch(opt.video.content, vTmp, "تنزيل الفيديو (" + opt.label + ")", 0, 92)
+                finalFile = vTmp
+            } else {
+                fetch(opt.video.content, vTmp, "تنزيل الصورة (" + opt.label + ")", 0, 80)
+                fetch(opt.audio.content, aTmp, "تنزيل الصوت", 80, 90)
+                setStatus("جارٍ دمج الصوت والصورة...")
+                mux(vTmp, aTmp, outTmp)
+                finalFile = outTmp
+            }
+            ui.post { bar.progress = 94 }
+            setStatus("جارٍ الحفظ...")
+            val saved = saveToStore(title, finalFile)
+
+            setStatus("جارٍ جلب التعليقات...")
+            val comments = try { fetchComments(url) } catch (e: Exception) { emptyList() }
+            saveComments(saved.first, title, comments)
+
+            val item = VideoItem(saved.first, title, info.duration * 1000L, saved.second)
+            ui.post {
+                bar.progress = 100
+                status.text = "✓ تم تنزيل الفيديو و ${comments.size} تعليق — اضغط هنا للتشغيل ▶"
+                status.visibility = View.VISIBLE
+                status.setOnClickListener {
+                    status.visibility = View.GONE; status.setOnClickListener(null); status.isClickable = false
+                    onOpen(item)
+                }
+                onDone()
+            }
+        } catch (e: Exception) {
+            fail(e)
+        } finally {
+            vTmp.delete(); aTmp.delete(); outTmp.delete()
+            finishUi()
+        }
+    }
+
+    private fun report(label: String, pos: Long, total: Long, from: Int, to: Int) {
+        val frac = if (total > 0) pos.toDouble() / total else 0.0
+        val pct = from + ((to - from) * frac).toInt()
+        ui.post { bar.progress = pct }
+        val mb = 1024.0 * 1024.0
+        setStatus(String.format(Locale.US, "%s %d%% — %.1f / %.1f MB", label, (frac * 100).toInt(), pos / mb, maxOf(total, 0L) / mb))
+    }
+
+    /** تنزيل على دفعات 4MB مع إعادة المحاولة من نفس المكان عند انقطاع الاتصال */
+    private fun fetch(link: String, dest: File, label: String, from: Int, to: Int) {
+        var pos = 0L
+        var total = -1L
+        var lastUi = 0L
+        FileOutputStream(dest).use { out ->
+            val buf = ByteArray(64 * 1024)
+            while (total < 0 || pos < total) {
+                var attempt = 0
+                while (true) {
+                    if (cancelled) throw Cancelled()
+                    val before = pos
+                    try {
+                        val conn = URL(link).openConnection() as HttpURLConnection
+                        conn.setRequestProperty("User-Agent", UA)
+                        conn.setRequestProperty("Range", "bytes=$pos-${pos + CHUNK - 1}")
+                        conn.connectTimeout = 20000; conn.readTimeout = 20000
+                        val code = conn.responseCode
+                        if (code != 206 && !(code == 200 && pos == 0L)) throw IOException("HTTP $code")
+                        val whole = code == 200
+                        total = if (whole) conn.contentLengthLong
+                        else conn.getHeaderField("Content-Range")?.substringAfter('/')?.trim()?.toLongOrNull()
+                            ?: throw IOException("Content-Range")
+                        conn.inputStream.use { inp ->
+                            while (true) {
+                                if (cancelled) throw Cancelled()
+                                val n = inp.read(buf)
+                                if (n < 0) break
+                                out.write(buf, 0, n); pos += n
+                                val now = System.currentTimeMillis()
+                                if (now - lastUi > 400) { lastUi = now; report(label, pos, total, from, to) }
+                            }
+                        }
+                        if (whole) total = pos
+                        if (pos == before) throw IOException("empty")
+                        break
+                    } catch (e: IOException) {
+                        if (++attempt > 3) throw e
+                        Thread.sleep(800)
+                    }
+                }
+            }
+        }
+        report(label, pos, total, from, to)
+    }
+
+    /** دمج مسار الصورة مع مسار الصوت في ملف MP4 واحد بدون إعادة ترميز */
+    private fun mux(videoF: File, audioF: File, out: File) {
+        val vEx = MediaExtractor(); val aEx = MediaExtractor()
+        var muxer: MediaMuxer? = null
+        try {
+            vEx.setDataSource(videoF.absolutePath); aEx.setDataSource(audioF.absolutePath)
+            fun pick(ex: MediaExtractor, prefix: String): Int {
+                for (i in 0 until ex.trackCount) {
+                    if (ex.getTrackFormat(i).getString(MediaFormat.KEY_MIME)?.startsWith(prefix) == true) return i
+                }
+                throw IllegalStateException("لا يوجد مسار $prefix")
+            }
+            val vt = pick(vEx, "video/"); val at = pick(aEx, "audio/")
+            vEx.selectTrack(vt); aEx.selectTrack(at)
+            val m = MediaMuxer(out.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            muxer = m
+            val vo = m.addTrack(vEx.getTrackFormat(vt)); val ao = m.addTrack(aEx.getTrackFormat(at))
+            m.start()
+            val buf = java.nio.ByteBuffer.allocate(4 * 1024 * 1024)
+            val bi = MediaCodec.BufferInfo()
+            while (true) {
+                if (cancelled) throw Cancelled()
+                val vTime = vEx.sampleTime; val aTime = aEx.sampleTime
+                if (vTime < 0 && aTime < 0) break
+                val useV = aTime < 0 || (vTime in 0..aTime)
+                val ex = if (useV) vEx else aEx
+                val tr = if (useV) vo else ao
+                buf.clear()
+                val size = ex.readSampleData(buf, 0)
+                if (size < 0) { ex.advance(); continue }
+                bi.set(0, size, ex.sampleTime, ex.sampleFlags)
+                m.writeSampleData(tr, buf, bi)
+                ex.advance()
+            }
+            m.stop()
+        } finally {
+            try { muxer?.release() } catch (_: Exception) {}
+            try { vEx.release() } catch (_: Exception) {}
+            try { aEx.release() } catch (_: Exception) {}
+        }
+    }
+
+    /** ينسخ الملف النهائي إلى المجلد المختار ويرجع (معرّف MediaStore، الرابط) */
+    private fun saveToStore(title: String, src: File): Pair<Long, Uri> {
+        val resolver = act.contentResolver
+        val folderPath = folder()
+        val base = Environment.getExternalStorageDirectory().absolutePath.trimEnd('/')
+
+        if (Build.VERSION.SDK_INT >= 29) {
+            fun insert(r: String): Uri? {
+                val cv = ContentValues().apply {
+                    put(MediaStore.Video.Media.DISPLAY_NAME, "$title.mp4")
+                    put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                    put(MediaStore.Video.Media.RELATIVE_PATH, r)
+                    put(MediaStore.Video.Media.IS_PENDING, 1)
+                }
+                return resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, cv)
+            }
+            val rel = if (folderPath.startsWith(base))
+                folderPath.removePrefix(base).trim('/') + "/" else "Movies/OfflineTube/"
+            var uri: Uri? = try { insert(rel) } catch (e: Exception) { null }
+            if (uri == null) uri = insert("Movies/OfflineTube/")
+            val target = uri ?: throw IllegalStateException("تعذّر إنشاء ملف الحفظ")
+            try {
+                val o = resolver.openOutputStream(target) ?: throw IllegalStateException("تعذّر فتح ملف الحفظ")
+                o.use { os -> src.inputStream().use { it.copyTo(os, 256 * 1024) } }
+            } catch (e: Exception) {
+                resolver.delete(target, null, null); throw e
+            }
+            val cv = ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }
+            resolver.update(target, cv, null, null)
+            return Pair(ContentUris.parseId(target), target)
+        }
+
+        var dest = File(folderPath, "$title.mp4")
+        dest.parentFile?.mkdirs()
+        if (dest.exists()) dest = File(folderPath, title + "_" + System.currentTimeMillis() + ".mp4")
+        src.inputStream().use { i -> FileOutputStream(dest).use { o -> i.copyTo(o, 256 * 1024) } }
+        val latch = CountDownLatch(1)
+        var scanned: Uri? = null
+        MediaScannerConnection.scanFile(act, arrayOf(dest.absolutePath), null) { _, u -> scanned = u; latch.countDown() }
+        latch.await(5, TimeUnit.SECONDS)
+        val u = scanned
+        val id = if (u != null) { try { ContentUris.parseId(u) } catch (_: Exception) { 0L } } else 0L
+        return Pair(id, u ?: Uri.fromFile(dest))
+    }
+
+    // ---------------- التعليقات ----------------
     private fun fetchComments(url: String): List<String> {
         val out = ArrayList<String>()
         fun add(items: List<CommentsInfoItem>) {
@@ -1833,73 +2091,5 @@ class YoutubeTab(
         File(dir, "$mediaId.txt").writeText(
             title + "\n\n" + comments.joinToString("\n\n──────────\n\n")
         )
-    }
-
-    /** يحفظ الفيديو ويرجع معرّف MediaStore */
-    private fun saveVideo(title: String, link: String): Long {
-        val resolver = act.contentResolver
-        val folderPath = folder()
-        val base = Environment.getExternalStorageDirectory().absolutePath.trimEnd('/')
-
-        var uri: android.net.Uri? = null
-        var file: File? = null
-        val out: OutputStream
-
-        if (Build.VERSION.SDK_INT >= 29) {
-            var rel = if (folderPath.startsWith(base)) folderPath.removePrefix(base).trim('/') + "/" else "Movies/OfflineTube/"
-            fun insert(r: String): android.net.Uri? {
-                val cv = ContentValues().apply {
-                    put(MediaStore.Video.Media.DISPLAY_NAME, "$title.mp4")
-                    put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-                    put(MediaStore.Video.Media.RELATIVE_PATH, r)
-                    put(MediaStore.Video.Media.IS_PENDING, 1)
-                }
-                return resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, cv)
-            }
-            uri = try { insert(rel) } catch (e: Exception) { null }
-            if (uri == null) { rel = "Movies/OfflineTube/"; uri = insert(rel) }
-            out = resolver.openOutputStream(uri!!) ?: throw IllegalStateException("تعذّر فتح ملف الحفظ")
-        } else {
-            file = File(folderPath, "$title.mp4")
-            file.parentFile?.mkdirs()
-            out = FileOutputStream(file)
-        }
-
-        try {
-            val conn = URL(link).openConnection() as HttpURLConnection
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0")
-            conn.connectTimeout = 30000; conn.readTimeout = 30000
-            val total = conn.contentLengthLong
-            var done = 0L; var lastPct = -1
-            conn.inputStream.use { inp ->
-                out.use { o ->
-                    val buf = ByteArray(64 * 1024)
-                    while (true) {
-                        val n = inp.read(buf); if (n < 0) break
-                        o.write(buf, 0, n); done += n
-                        if (total > 0) {
-                            val pct = (done * 100 / total).toInt()
-                            if (pct != lastPct) { lastPct = pct; ui.post { bar.progress = pct } }
-                        }
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            if (uri != null) resolver.delete(uri, null, null) else file?.delete()
-            throw e
-        }
-
-        if (uri != null) {
-            val cv = ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }
-            resolver.update(uri, cv, null, null)
-            return ContentUris.parseId(uri)
-        }
-        val latch = CountDownLatch(1)
-        var scanned: android.net.Uri? = null
-        MediaScannerConnection.scanFile(act, arrayOf(file!!.absolutePath), null) { _, u ->
-            scanned = u; latch.countDown()
-        }
-        latch.await(5, TimeUnit.SECONDS)
-        return scanned?.let { ContentUris.parseId(it) } ?: 0L
     }
 }
