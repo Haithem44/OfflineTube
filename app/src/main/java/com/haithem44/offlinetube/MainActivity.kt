@@ -213,6 +213,9 @@ class MainActivity : AppCompatActivity() {
 
     private val all = ArrayList<VideoItem>()
     private val shown = ArrayList<VideoItem>()
+    
+    // مجموعة لتتبع الفيديوهات التي تم فتح تعليقاتها في القائمة
+    private val expandedCommentIds = HashSet<Long>()
 
     private lateinit var listView: ListView
     private lateinit var adapter: VideoAdapter
@@ -1019,6 +1022,7 @@ class MainActivity : AppCompatActivity() {
     private fun afterDeleted(v: VideoItem) {
         all.remove(v); cache.remove(v.id); try { thumbFile(v).delete() } catch (_: Exception) {}
         try { File(File(filesDir, "comments"), "${v.id}.txt").delete() } catch (_: Exception) {}
+        expandedCommentIds.remove(v.id) // إزالة حالة التعليقات
         prefs.clearVideo(v.id); refresh(); Toast.makeText(this@MainActivity, "تم حذف الفيديو", Toast.LENGTH_SHORT).show()
     }
 
@@ -1052,41 +1056,75 @@ class MainActivity : AppCompatActivity() {
         col.addView(title)
         row.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
 
-        val trash = ImageView(this)
-        trash.scaleType = ImageView.ScaleType.FIT_CENTER
-        trash.setImageDrawable(IconDrawable(IconDrawable.TRASH, Color.parseColor("#FF8A80")))
-        trash.setPadding(dp(5), dp(5), dp(5), dp(5))
-        trash.isFocusable = false
-        trash.contentDescription = "حذف"
-        trash.setOnClickListener { confirmDelete(v) }
+        // حاوية التعليقات (مخفية افتراضياً)
+        val commentsContainer = LinearLayout(this)
+        commentsContainer.orientation = LinearLayout.VERTICAL
+        commentsContainer.setPadding(dp(12), 0, dp(12), dp(12))
+        commentsContainer.visibility = View.GONE
+        card.addView(commentsContainer)
 
-        val trashBg = GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            cornerRadius = dp(8).toFloat()
-            setColor(Color.parseColor("#1AFF5252"))
-            setStroke(dp(1), Color.parseColor("#33FF5252"))
+        // دالة داخلية لملء التعليقات
+        fun populateComments(container: LinearLayout, id: Long) {
+            container.removeAllViews()
+            val comments = try {
+                val f = File(File(filesDir, "comments"), "$id.txt")
+                if (!f.exists()) emptyList()
+                else f.readText().substringAfter("\n\n", "").split("\n\n──────────\n\n").filter { it.isNotBlank() }
+            } catch (_: Exception) { emptyList() }
+
+            if (comments.isEmpty()) {
+                val empty = TextView(this)
+                empty.text = "لا توجد تعليقات محفوظة."
+                empty.setTextColor(gray)
+                empty.textSize = 13f
+                container.addView(empty)
+            } else {
+                for (cm in comments) {
+                    val nl = cm.indexOf('\n')
+                    val author = if (nl > 0) cm.substring(0, nl) else ""
+                    val body = if (nl > 0) cm.substring(nl + 1) else cm
+                    
+                    val a = TextView(this)
+                    a.text = author
+                    a.setTextColor(Color.parseColor("#AAAAAA"))
+                    a.textSize = 12f
+                    a.typeface = fontBold
+                    a.setPadding(0, dp(8), 0, dp(2))
+                    a.textDirection = View.TEXT_DIRECTION_FIRST_STRONG
+                    
+                    val b = TextView(this)
+                    b.text = body
+                    b.setTextColor(Color.WHITE)
+                    b.textSize = 14f
+                    b.setPadding(0, 0, 0, dp(4))
+                    b.textDirection = View.TEXT_DIRECTION_FIRST_STRONG
+                    
+                    container.addView(a)
+                    container.addView(b)
+                    
+                    // خط فاصل خفيف
+                    val divider = View(this)
+                    divider.setBackgroundColor(Color.parseColor("#1AFFFFFF"))
+                    container.addView(divider, LinearLayout.LayoutParams(-1, dp(1)).apply { setMargins(0, dp(2), 0, dp(2)) })
+                }
+            }
         }
-        trash.background = trashBg
 
-        row.addView(trash, LinearLayout.LayoutParams(dp(28), dp(28)).apply {
-            setMargins(dp(8), 0, dp(6), 0)
-        })
+        // إذا كان هذا الفيديو مفتوحاً مسبقاً، قم بإظهار تعليقاته مباشرة
+        if (expandedCommentIds.contains(v.id)) {
+            populateComments(commentsContainer, v.id)
+            commentsContainer.visibility = View.VISIBLE
+        }
 
+        // زر النقاط الثلاث
         val dots = TextView(this)
         dots.text = "•••"
         dots.setTextColor(Color.WHITE)
         dots.textSize = 12f
         dots.gravity = Gravity.CENTER
-        dots.setPadding(0, 0, 0, 0)
         dots.isFocusable = false
         dots.contentDescription = "خيارات"
-        dots.setOnClickListener {
-            val pm = PopupMenu(this, dots)
-            pm.menu.add(0, 1, 0, "إعادة المشاهدة من البداية")
-            pm.setOnMenuItemClickListener { prefs.resetProgress(v.id); refresh(); true }
-            pm.show()
-        }
-
+        
         val dotsBg = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = dp(8).toFloat()
@@ -1094,8 +1132,42 @@ class MainActivity : AppCompatActivity() {
         }
         dots.background = dotsBg
 
-        row.addView(dots, LinearLayout.LayoutParams(dp(28), dp(28)).apply {
-            setMargins(dp(0), 0, 0, 0)
+        dots.setOnClickListener {
+            val pm = PopupMenu(this, dots)
+            val cCount = countComments(v.id)
+            val isExpanded = expandedCommentIds.contains(v.id)
+            
+            pm.menu.add(0, 1, 0, "إعادة المشاهدة من البداية")
+            if (cCount > 0) {
+                pm.menu.add(0, 2, 1, if (isExpanded) "إخفاء التعليقات" else "عرض التعليقات ($cCount)")
+            } else {
+                pm.menu.add(0, 2, 1, "لا توجد تعليقات").isEnabled = false
+            }
+            pm.menu.add(0, 3, 2, "حذف الفيديو")
+            
+            pm.setOnMenuItemClickListener { item ->
+                when (item.itemId) {
+                    1 -> { prefs.resetProgress(v.id); refresh(); true }
+                    2 -> {
+                        if (isExpanded) {
+                            expandedCommentIds.remove(v.id)
+                            commentsContainer.visibility = View.GONE
+                        } else {
+                            expandedCommentIds.add(v.id)
+                            populateComments(commentsContainer, v.id)
+                            commentsContainer.visibility = View.VISIBLE
+                        }
+                        true
+                    }
+                    3 -> { confirmDelete(v); true }
+                    else -> false
+                }
+            }
+            pm.show()
+        }
+
+        row.addView(dots, LinearLayout.LayoutParams(dp(32), dp(32)).apply {
+            setMargins(dp(8), 0, dp(4), 0)
         })
 
         card.addView(row); applyFont(box)
@@ -1956,30 +2028,40 @@ class YoutubeTab(
         try {
             val finalFile: File
             if (opt.audio == null) {
-                fetch(opt.video.content, vTmp, "تنزيل الفيديو (" + opt.label + ")", 0, 92)
+                fetch(opt.video.content, vTmp, "تنزيل الفيديو (" + opt.label + ")", 0, 80)
                 finalFile = vTmp
             } else {
-                fetch(opt.video.content, vTmp, "تنزيل الصورة (" + opt.label + ")", 0, 80)
-                fetch(opt.audio.content, aTmp, "تنزيل الصوت", 80, 90)
+                fetch(opt.video.content, vTmp, "تنزيل الصورة (" + opt.label + ")", 0, 70)
+                fetch(opt.audio.content, aTmp, "تنزيل الصوت", 70, 80)
                 setStatus("جارٍ دمج الصوت والصورة...")
                 mux(vTmp, aTmp, outTmp)
                 finalFile = outTmp
             }
-            ui.post { bar.progress = 94 }
-            setStatus("جارٍ الحفظ...")
+            ui.post { bar.progress = 85 }
+            setStatus("جارٍ حفظ الفيديو في الهاتف...")
             val saved = saveToStore(title, finalFile)
 
-            setStatus("جارٍ جلب التعليقات...")
-            val comments = try { fetchComments(url) } catch (e: Exception) { emptyList() }
-            val savedCommentsOk = saveComments(saved.first, title, comments)
+            // --- جلب وتنزيل التعليقات ---
+            setStatus("جارٍ جلب التعليقات (50)...")
+            ui.post { bar.progress = 90 }
+            
+            var commentsCount = 0
+            val savedCommentsOk = try {
+                val comments = fetchComments(url) // جلب 50 تعليق
+                commentsCount = comments.size
+                saveComments(saved.first, title, comments) // حفظها في الهاتف
+            } catch (e: Exception) {
+                false
+            }
 
             val item = VideoItem(saved.first, title, info.duration * 1000L, saved.second)
+            
             ui.post {
                 bar.progress = 100
-                status.text = if (savedCommentsOk)
-                    "✓ تم تنزيل الفيديو و ${comments.size} تعليق — اضغط هنا للتشغيل ▶"
+                status.text = if (savedCommentsOk && commentsCount > 0)
+                    "✓ تم تنزيل الفيديو و $commentsCount تعليق — اضغط للتشغيل ▶"
                 else
-                    "✓ تم تنزيل الفيديو — اضغط هنا للتشغيل ▶ (تعذّر حفظ التعليقات)"
+                    "✓ تم تنزيل الفيديو — اضغط للتشغيل ▶ (تعذّر جلب التعليقات)"
                 status.visibility = View.VISIBLE
                 status.setOnClickListener {
                     status.visibility = View.GONE; status.setOnClickListener(null); status.isClickable = false
@@ -2138,6 +2220,7 @@ class YoutubeTab(
     // ---------------- التعليقات ----------------
     private fun fetchComments(url: String): List<String> {
         val out = ArrayList<String>()
+        
         fun add(items: List<CommentsInfoItem>) {
             for (c in items) {
                 if (out.size >= MAX_COMMENTS) return
@@ -2147,14 +2230,23 @@ class YoutubeTab(
                 out.add("$author (👍 ${c.likeCount}):\n$text")
             }
         }
-        val ci = CommentsInfo.getInfo(url)
-        add(ci.relatedItems)
-        var page = ci.nextPage
-        while (out.size < MAX_COMMENTS && page != null) {
-            val more = CommentsInfo.getMoreItems(ServiceList.YouTube, url, page)
-            add(more.items)
-            page = more.nextPage
+
+        try {
+            // جلب الصفحة الأولى من التعليقات
+            val ci = CommentsInfo.getInfo(url)
+            add(ci.relatedItems)
+            
+            // جلب المزيد من الصفحات حتى نصل إلى 50 تعليق
+            var page = ci.nextPage
+            while (out.size < MAX_COMMENTS && page != null) {
+                val more = CommentsInfo.getMoreItems(ServiceList.YouTube, url, page)
+                add(more.items)
+                page = more.nextPage
+            }
+        } catch (e: Exception) {
+            e.printStackTrace() // لطباعة الخطأ في اللوج إن حدث
         }
+        
         return out
     }
 
