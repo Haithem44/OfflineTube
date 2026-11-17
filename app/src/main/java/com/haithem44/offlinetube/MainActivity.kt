@@ -220,9 +220,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var logo: LinearLayout
     private lateinit var searchBox: EditText
     private lateinit var emptyText: TextView
-    private lateinit var ytTab: YoutubeTab       // [YouTube]
-    private lateinit var ytPanel: FrameLayout   // [YouTube] لوحة تبويب يوتيوب
-    private val YT_TAB = 5                       // [YouTube] رقم تبويب يوتيوب
+    private lateinit var ytTab: YoutubeTab
+    private lateinit var ytPanel: FrameLayout
+    private val YT_TAB = 5
     private var hasBanner = false
     private var tab = 0
     private var query = ""
@@ -237,6 +237,7 @@ class MainActivity : AppCompatActivity() {
     private var pendingDelete: VideoItem? = null
     private var deleteNeedsRetry = false
     private var pendingOpenId: Long = -1L
+    private var pendingRestoreComments = false
     private var observerRegistered = false
 
     private val tabNames = arrayOf("الصفحة الرئيسية", "تابع المشاهدة", "الأطول", "تمت المشاهدة", "Shorts", "YouTube")
@@ -301,11 +302,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var fsBtn: ImageView
     private lateinit var unlockBtn: ImageView
     private lateinit var hudText: TextView
-    private lateinit var commentsPanel: LinearLayout   // [Comments]
+    private lateinit var commentsPanel: LinearLayout
     private lateinit var commentsList: LinearLayout
     private lateinit var commentsTitle: TextView
+    private lateinit var commentBadge: TextView
     private lateinit var gestureOverlay: View
     private var commentsOpen = false
+    private var commentsCount = 0
     private var savedResize = AspectRatioFrameLayout.RESIZE_MODE_FIT
     private lateinit var gestures: GestureDetector
     private val pauseDrawable = IconDrawable(IconDrawable.PAUSE, Color.WHITE)
@@ -401,13 +404,14 @@ class MainActivity : AppCompatActivity() {
         tab = savedInstanceState?.getInt("tab") ?: prefs.lastTab
         query = savedInstanceState?.getString("query") ?: ""
         pendingOpenId = savedInstanceState?.let { if (it.getBoolean("player_open")) it.getLong("current_id", -1L) else -1L } ?: -1L
+        pendingRestoreComments = savedInstanceState?.getBoolean("comments_open") == true
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (playerRoot.visibility == View.VISIBLE) {
                     if (locked) showUnlockBtn() else if (commentsPanel.visibility == View.VISIBLE) hideComments() else closePlayer()
                 } else if (tab == YT_TAB) {
-                    if (!ytTab.handleBack()) selectTab(0)   // [YouTube] رجوع داخل الصفحة ثم للرئيسية
+                    if (!ytTab.handleBack()) selectTab(0)
                 } else {
                     isEnabled = false
                     onBackPressedDispatcher.onBackPressed()
@@ -461,7 +465,6 @@ class MainActivity : AppCompatActivity() {
         listFrame.addView(emptyText, FrameLayout.LayoutParams(-1, -1))
         listView.emptyView = emptyText
 
-        // [YouTube] لوحة تبويب يوتيوب فوق القائمة
         ytTab = YoutubeTab(this, { folderPath }, { reloadVideos() }, { openPlayer(it) })
         ytPanel = ytTab.view
         listFrame.addView(ytPanel, FrameLayout.LayoutParams(-1, -1))
@@ -512,6 +515,7 @@ class MainActivity : AppCompatActivity() {
         outState.putInt("tab", tab)
         outState.putString("query", query)
         outState.putBoolean("player_open", playerRoot.visibility == View.VISIBLE)
+        outState.putBoolean("comments_open", commentsOpen && commentsPanel.visibility == View.VISIBLE)
         current?.let { c ->
             outState.putLong("current_id", c.id)
             val p = player
@@ -595,6 +599,36 @@ class MainActivity : AppCompatActivity() {
         }
         return b
     }
+
+    private fun makeCommentButton(): View {
+        val holder = FrameLayout(this)
+        val icon = makePlayerBtn(IconDrawable.COMMENT) { toggleComments() }
+        holder.addView(icon, FrameLayout.LayoutParams(dp(44), dp(44)))
+        commentBadge = TextView(this)
+        commentBadge.setTextColor(Color.WHITE)
+        commentBadge.textSize = 10f
+        commentBadge.typeface = Typeface.DEFAULT_BOLD
+        commentBadge.gravity = Gravity.CENTER
+        commentBadge.setPadding(dp(4), 0, dp(4), 0)
+        commentBadge.background = GradientDrawable().apply { setColor(red); cornerRadius = dp(8).toFloat() }
+        commentBadge.visibility = View.GONE
+        holder.addView(
+            commentBadge,
+            FrameLayout.LayoutParams(-2, dp(16), Gravity.RIGHT or Gravity.TOP).apply {
+                topMargin = dp(2); rightMargin = dp(2)
+            }
+        )
+        return holder
+    }
+
+    private fun countComments(id: Long): Int = try {
+        val f = File(File(filesDir, "comments"), "$id.txt")
+        if (!f.exists()) 0
+        else f.readText()
+            .substringAfter("\n\n", "")
+            .split("\n\n──────────\n\n")
+            .count { it.isNotBlank() }
+    } catch (_: Exception) { 0 }
 
     private fun findImageRes(name: String): Int {
         var id = resources.getIdentifier(name, "drawable", packageName)
@@ -699,7 +733,7 @@ class MainActivity : AppCompatActivity() {
     private fun selectTab(i: Int) {
         val prev = tab
         tab = i; prefs.lastTab = i
-        ytPanel.visibility = if (i == YT_TAB) View.VISIBLE else View.GONE   // [YouTube]
+        ytPanel.visibility = if (i == YT_TAB) View.VISIBLE else View.GONE
         if (i == YT_TAB) ytTab.onShown() else if (prev == YT_TAB) ytTab.onHidden()
         updateTabStyles(); refresh(); listView.setSelection(0)
     }
@@ -714,7 +748,6 @@ class MainActivity : AppCompatActivity() {
         row.addView(navItem(IconDrawable.SEARCH, "بحث", -1, { openSearch() }), navLp())
         row.addView(navItem(IconDrawable.PLAY, "تابع", 1, { selectTab(1) }), navLp())
         row.addView(navItem(IconDrawable.REFRESH, "تحديث", -1, { reloadVideos() }), navLp())
-        // زر المجلد: ضغطة عادية = اختيار/تغيير مجلد الفيديوهات
         row.addView(navItem(
             IconDrawable.FOLDER, "المجلد", -1,
             { pickFolder() },
@@ -751,7 +784,7 @@ class MainActivity : AppCompatActivity() {
             2 -> list.sortedByDescending { it.duration }
             3 -> list.filter { prefs.watched(it.id) }.sortedByDescending { prefs.lastTouched(it.id) }
             4 -> list.filter { it.duration in 1L..60000L }
-            5 -> emptyList()   // [YouTube] تبويب يوتيوب لا يعرض قائمة
+            5 -> emptyList()
             else -> list
         }
         shown.clear(); shown.addAll(list); adapter.notifyDataSetChanged(); rebuildContinue(); updateEmptyState()
@@ -852,7 +885,6 @@ class MainActivity : AppCompatActivity() {
         } catch (_: Exception) {}
     }
 
-    // إن لم يُختر مجلد بعد: يفتح اختيار المجلد مباشرة
     private fun startLoad() { if (folderPath.isEmpty()) pickFolder() else loadVideos() }
 
     override fun onResume() {
@@ -861,10 +893,6 @@ class MainActivity : AppCompatActivity() {
         if (playerRoot.visibility != View.VISIBLE) reloadVideos()
     }
 
-    /**
-     * يقرأ الفيديوهات من المجلد المختار فقط.
-     * إذا لم يُختر مجلد → القائمة فارغة.
-     */
     private fun loadVideos() {
         val folder = folderPath
         pool.execute {
@@ -915,13 +943,11 @@ class MainActivity : AppCompatActivity() {
                         val id = c.getLong(iId)
                         var inFolder = false
 
-                        // أندرويد < 10: مطابقة عبر المسار الكامل DATA
                         if (iData >= 0) {
                             @Suppress("DEPRECATION")
                             val data = c.getString(iData)
                             if (data != null && (data == normFolder || data.startsWith("$normFolder/"))) inFolder = true
                         }
-                        // أندرويد 10+: مطابقة عبر RELATIVE_PATH
                         if (!inFolder && primaryTarget != null && iRel >= 0) {
                             val rel = c.getString(iRel)?.trimEnd('/') ?: ""
                             if (primaryTarget.isEmpty() || rel == primaryTarget || rel.startsWith("$primaryTarget/")) inFolder = true
@@ -992,7 +1018,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun afterDeleted(v: VideoItem) {
         all.remove(v); cache.remove(v.id); try { thumbFile(v).delete() } catch (_: Exception) {}
-        // [YouTube] احذف ملف التعليقات المرتبط بالفيديو
         try { File(File(filesDir, "comments"), "${v.id}.txt").delete() } catch (_: Exception) {}
         prefs.clearVideo(v.id); refresh(); Toast.makeText(this@MainActivity, "تم حذف الفيديو", Toast.LENGTH_SHORT).show()
     }
@@ -1266,7 +1291,6 @@ class MainActivity : AppCompatActivity() {
         timeText = TextView(this); timeText.setTextColor(Color.WHITE); timeText.textSize = 12f; timeText.text = "0:00 / 0:00"; timeText.setPadding(dp(6), 0, dp(6), 0)
         seekRow.addView(timeText)
 
-        // زر الخروج من الفيديو (أسفل يمين الفيديو): يغلق المشغّل ويرجع للقائمة
         fsBtn = ImageView(this)
         fsBtn.scaleType = ImageView.ScaleType.FIT_CENTER
         fsBtn.setImageDrawable(IconDrawable(IconDrawable.COMPRESS, Color.WHITE))
@@ -1320,7 +1344,9 @@ class MainActivity : AppCompatActivity() {
         btnRow.addView(speedBtn, LinearLayout.LayoutParams(dp(48), dp(48)).apply { setMargins(dp(5), dp(2), dp(5), dp(2)) })
 
         btnRow.addView(makePlayerBtn(IconDrawable.LOCK) { setLocked(true) }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { setMargins(dp(5), 0, dp(5), 0) })
-        btnRow.addView(makePlayerBtn(IconDrawable.COMMENT) { toggleComments() }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { setMargins(dp(5), 0, dp(5), 0) })   // [Comments]
+
+        // زر التعليقات مع شارة العدد
+        btnRow.addView(makeCommentButton(), LinearLayout.LayoutParams(dp(44), dp(44)).apply { setMargins(dp(5), 0, dp(5), 0) })
 
         if (Build.VERSION.SDK_INT >= 26 && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
             btnRow.addView(makePlayerBtn(IconDrawable.PIP) { enterPip() }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { setMargins(dp(5), 0, dp(5), 0) })
@@ -1339,7 +1365,6 @@ class MainActivity : AppCompatActivity() {
         controls.addView(btnRow, LinearLayout.LayoutParams(-1, -2))
         playerRoot.addView(controls, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
 
-        // [Comments] لوحة التعليقات فوق أزرار التحكم
         commentsPanel = LinearLayout(this); commentsPanel.orientation = LinearLayout.VERTICAL
         commentsPanel.setBackgroundColor(Color.parseColor("#0F0F0F")); commentsPanel.isClickable = true
         commentsPanel.visibility = View.GONE
@@ -1377,7 +1402,6 @@ class MainActivity : AppCompatActivity() {
     private fun showHud(text: String) { hudText.text = text; hudText.visibility = View.VISIBLE; ui.removeCallbacks(hideHud); ui.postDelayed(hideHud, 700) }
     private fun showUnlockBtn() { unlockBtn.visibility = View.VISIBLE; ui.removeCallbacks(hideUnlock); ui.postDelayed(hideUnlock, 2500) }
 
-    // [Comments] عرض/إخفاء التعليقات المحفوظة مع الفيديو
     private fun hideComments() {
         commentsPanel.visibility = View.GONE
         if (!commentsOpen) return
@@ -1388,7 +1412,6 @@ class MainActivity : AppCompatActivity() {
                                else ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
     }
 
-    /** on=true: الفيديو في الأعلى (16:9) والتعليقات تحته مثل يوتيوب، off=true: الفيديو يملأ الشاشة */
     private fun applyCommentsLayout(on: Boolean) {
         val dm = resources.displayMetrics
         val pw = minOf(dm.widthPixels, dm.heightPixels)
@@ -1510,10 +1533,30 @@ class MainActivity : AppCompatActivity() {
 
     private fun openPlayer(v: VideoItem) {
         releasePlayer(); current = v; videoW = 0; videoH = 0; locked = false; speedIdx = 2; speedBtn.text = "1x"
-        aspectLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM   // شاشة كاملة افتراضياً (زر التكبير يبدّل إلى العرض الكامل)
+        aspectLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
         hideComments()
         unlockBtn.visibility = View.GONE; hudText.visibility = View.GONE; playerTitle.text = v.title; setPlayIcon(true); seekBar.progress = 0
         controls.visibility = View.VISIBLE; topBar.visibility = View.VISIBLE; playerRoot.visibility = View.VISIBLE; hideSystemBars(true)
+
+        // شارة عدد التعليقات
+        commentsCount = countComments(v.id)
+        commentBadge.text = when {
+            commentsCount <= 0 -> ""
+            commentsCount > 99 -> "99+"
+            else -> commentsCount.toString()
+        }
+        commentBadge.visibility = if (commentsCount > 0) View.VISIBLE else View.GONE
+
+        // إعادة فتح لوحة التعليقات إذا كانت مفتوحة قبل التدوير
+        if (pendingRestoreComments) {
+            pendingRestoreComments = false
+            ui.postDelayed({
+                if (playerRoot.visibility == View.VISIBLE && current != null && commentsPanel.visibility != View.VISIBLE) {
+                    toggleComments()
+                }
+            }, 700)
+        }
+
         if (surfaceView.holder.surface.isValid) { pending = null; startPlayback(v) } else { pending = v }
     }
 
@@ -1724,7 +1767,6 @@ class YoutubeTab(
         view.layoutDirection = View.LAYOUT_DIRECTION_LTR
         view.isClickable = true
 
-        // ---- صفحة يوتيوب الحقيقية
         val st = web.settings
         st.javaScriptEnabled = true
         st.domStorageEnabled = true
@@ -1735,7 +1777,6 @@ class YoutubeTab(
             override fun doUpdateVisitedHistory(v: WebView, url: String?, isReload: Boolean) { updateButton(url) }
         }
         web.webChromeClient = object : WebChromeClient() {
-            // ملء الشاشة مثل يوتيوب: بدون حواف ولا أشرطة، وبوضع أفقي
             override fun onShowCustomView(v: View, cb: WebChromeClient.CustomViewCallback) {
                 if (customView != null) { cb.onCustomViewHidden(); return }
                 v.setBackgroundColor(Color.BLACK)
@@ -1748,11 +1789,9 @@ class YoutubeTab(
         }
         view.addView(web, FrameLayout.LayoutParams(-1, -1))
 
-        // ---- شريط تقدّم التنزيل (أعلى)
         bar.max = 100; bar.visibility = View.GONE
         view.addView(bar, FrameLayout.LayoutParams(-1, dp(4), Gravity.TOP))
 
-        // ---- رسالة الحالة
         status.setTextColor(Color.WHITE); status.textSize = 13f; status.gravity = Gravity.CENTER
         status.setPadding(dp(14), dp(8), dp(14), dp(8))
         status.background = GradientDrawable().apply { setColor(Color.parseColor("#CC000000")); cornerRadius = dp(12).toFloat() }
@@ -1761,7 +1800,6 @@ class YoutubeTab(
             bottomMargin = dp(76); leftMargin = dp(16); rightMargin = dp(16)
         })
 
-        // ---- زر التنزيل / الإلغاء
         btn.text = BTN_TEXT
         btn.setTextColor(Color.WHITE); btn.textSize = 15f; btn.gravity = Gravity.CENTER
         btn.typeface = Typeface.DEFAULT_BOLD
@@ -1774,7 +1812,6 @@ class YoutubeTab(
         view.addView(btn, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(16) })
     }
 
-    // ---------------- دورة حياة التبويب ----------------
     fun onShown() {
         if (!loadedOnce) { loadedOnce = true; web.loadUrl(HOME) } else web.onResume()
     }
@@ -1817,7 +1854,6 @@ class YoutubeTab(
         setImmersive(false)
     }
 
-    // ---------------- رابط الفيديو الحالي ----------------
     private fun videoUrlOf(u: String?): String? {
         if (u == null || !(u.contains("youtube.com") || u.contains("youtu.be"))) return null
         val id = Regex("[?&]v=([\\w-]{11})").find(u)?.groupValues?.get(1)
@@ -1856,7 +1892,6 @@ class YoutubeTab(
         else setStatus("✗ فشل: ${e.message ?: e.javaClass.simpleName}")
     }
 
-    // ---------------- الضغط على الزر ----------------
     private fun onButton() {
         if (busy) { cancelled = true; setStatus("جارٍ الإلغاء..."); return }
         val url = currentVideoUrl
@@ -1887,7 +1922,6 @@ class YoutubeTab(
 
     private fun heightOf(res: String?): Int = Regex("\\d+").find(res ?: "")?.value?.toIntOrNull() ?: 0
 
-    /** الجودات المتاحة: صوت+صورة جاهزة، أو صورة فقط + صوت منفصل يُدمجان داخل التطبيق */
     private fun buildOptions(info: StreamInfo): List<Option> {
         val map = LinkedHashMap<Int, Option>()
         for (v in info.videoStreams.filter { it.isUrl }) {
@@ -1915,7 +1949,6 @@ class YoutubeTab(
             .show()
     }
 
-    // ---------------- التنزيل ----------------
     private fun runDownload(info: StreamInfo, url: String, opt: Option) {
         val title = info.name.replace(Regex("[\\\\/:*?\"<>|]"), "_").take(100)
         val tmpDir = File(act.cacheDir, "yt_dl").apply { mkdirs() }
@@ -1938,12 +1971,15 @@ class YoutubeTab(
 
             setStatus("جارٍ جلب التعليقات...")
             val comments = try { fetchComments(url) } catch (e: Exception) { emptyList() }
-            saveComments(saved.first, title, comments)
+            val savedCommentsOk = saveComments(saved.first, title, comments)
 
             val item = VideoItem(saved.first, title, info.duration * 1000L, saved.second)
             ui.post {
                 bar.progress = 100
-                status.text = "✓ تم تنزيل الفيديو و ${comments.size} تعليق — اضغط هنا للتشغيل ▶"
+                status.text = if (savedCommentsOk)
+                    "✓ تم تنزيل الفيديو و ${comments.size} تعليق — اضغط هنا للتشغيل ▶"
+                else
+                    "✓ تم تنزيل الفيديو — اضغط هنا للتشغيل ▶ (تعذّر حفظ التعليقات)"
                 status.visibility = View.VISIBLE
                 status.setOnClickListener {
                     status.visibility = View.GONE; status.setOnClickListener(null); status.isClickable = false
@@ -1967,7 +2003,6 @@ class YoutubeTab(
         setStatus(String.format(Locale.US, "%s %d%% — %.1f / %.1f MB", label, (frac * 100).toInt(), pos / mb, maxOf(total, 0L) / mb))
     }
 
-    /** تنزيل على دفعات 4MB مع إعادة المحاولة من نفس المكان عند انقطاع الاتصال */
     private fun fetch(link: String, dest: File, label: String, from: Int, to: Int) {
         var pos = 0L
         var total = -1L
@@ -2013,7 +2048,6 @@ class YoutubeTab(
         report(label, pos, total, from, to)
     }
 
-    /** دمج مسار الصورة مع مسار الصوت في ملف MP4 واحد بدون إعادة ترميز */
     private fun mux(videoF: File, audioF: File, out: File) {
         val vEx = MediaExtractor(); val aEx = MediaExtractor()
         var muxer: MediaMuxer? = null
@@ -2097,7 +2131,8 @@ class YoutubeTab(
         latch.await(5, TimeUnit.SECONDS)
         val u = scanned
         val id = if (u != null) { try { ContentUris.parseId(u) } catch (_: Exception) { 0L } } else 0L
-        return Pair(id, u ?: Uri.fromFile(dest))
+        val realId = if (id > 0) id else (dest.absolutePath.hashCode().toLong() and 0x7FFFFFFF)
+        return Pair(realId, u ?: Uri.fromFile(dest))
     }
 
     // ---------------- التعليقات ----------------
@@ -2106,8 +2141,10 @@ class YoutubeTab(
         fun add(items: List<CommentsInfoItem>) {
             for (c in items) {
                 if (out.size >= MAX_COMMENTS) return
-                val text = c.commentText?.content ?: ""
-                out.add("${c.uploaderName} (👍 ${c.likeCount}):\n$text")
+                val text = c.commentText?.content?.trim().orEmpty()
+                if (text.isEmpty()) continue
+                val author = c.uploaderName?.ifBlank { "مجهول" } ?: "مجهول"
+                out.add("$author (👍 ${c.likeCount}):\n$text")
             }
         }
         val ci = CommentsInfo.getInfo(url)
@@ -2121,10 +2158,11 @@ class YoutubeTab(
         return out
     }
 
-    private fun saveComments(mediaId: Long, title: String, comments: List<String>) {
+    private fun saveComments(mediaId: Long, title: String, comments: List<String>): Boolean = try {
         val dir = File(act.filesDir, "comments").apply { mkdirs() }
         File(dir, "$mediaId.txt").writeText(
             title + "\n\n" + comments.joinToString("\n\n──────────\n\n")
         )
-    }
+        true
+    } catch (_: Exception) { false }
 }
