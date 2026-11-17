@@ -75,6 +75,7 @@ import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.PopupMenu
 import android.widget.ProgressBar
+import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
@@ -113,7 +114,7 @@ class IconDrawable(private val kind: Int, initial: Int) : Drawable() {
         const val HOME = 0; const val SEARCH = 1; const val PLAY = 2; const val REFRESH = 3
         const val FOLDER = 4; const val TRASH = 5; const val BACK = 6; const val LOCK = 7
         const val UNLOCK = 8; const val PAUSE = 9; const val PLAY_FILLED = 10; const val EXPAND = 11
-        const val ROTATE = 12; const val PIP = 13; const val COMPRESS = 14
+        const val ROTATE = 12; const val PIP = 13; const val COMPRESS = 14; const val COMMENT = 15
     }
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -158,6 +159,7 @@ class IconDrawable(private val kind: Int, initial: Int) : Drawable() {
             ROTATE -> { canvas.drawRoundRect(RectF(3f, 6f, 21f, 18f), 2.5f, 2.5f, paint); p.moveTo(18f, 10f); p.lineTo(18f, 14f) }
             PIP -> { canvas.drawRoundRect(RectF(3f, 5f, 21f, 19f), 2f, 2f, paint); paint.style = Paint.Style.FILL; canvas.drawRoundRect(RectF(12f, 11f, 19f, 17f), 1f, 1f, paint); paint.style = Paint.Style.STROKE }
             COMPRESS -> { p.moveTo(9f, 4f); p.lineTo(9f, 9f); p.lineTo(4f, 9f); p.moveTo(15f, 4f); p.lineTo(15f, 9f); p.lineTo(20f, 9f); p.moveTo(20f, 15f); p.lineTo(15f, 15f); p.lineTo(15f, 20f); p.moveTo(4f, 15f); p.lineTo(9f, 15f); p.lineTo(9f, 20f) }
+            COMMENT -> { canvas.drawRoundRect(RectF(3f, 4f, 21f, 17f), 3f, 3f, paint); p.moveTo(8f, 17f); p.lineTo(8f, 21f); p.lineTo(12.5f, 17f) }
         }
         canvas.drawPath(p, paint); canvas.restore()
     }
@@ -291,6 +293,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var fsBtn: ImageView
     private lateinit var unlockBtn: ImageView
     private lateinit var hudText: TextView
+    private lateinit var commentsPanel: LinearLayout   // [Comments]
+    private lateinit var commentsList: LinearLayout
+    private lateinit var commentsTitle: TextView
     private lateinit var gestures: GestureDetector
     private val pauseDrawable = IconDrawable(IconDrawable.PAUSE, Color.WHITE)
     private val playDrawable = IconDrawable(IconDrawable.PLAY_FILLED, Color.WHITE)
@@ -389,7 +394,7 @@ class MainActivity : AppCompatActivity() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (playerRoot.visibility == View.VISIBLE) {
-                    if (locked) showUnlockBtn() else closePlayer()
+                    if (locked) showUnlockBtn() else if (commentsPanel.visibility == View.VISIBLE) hideComments() else closePlayer()
                 } else if (tab == YT_TAB) {
                     if (!ytTab.handleBack()) selectTab(0)   // [YouTube] رجوع داخل الصفحة ثم للرئيسية
                 } else {
@@ -1304,6 +1309,7 @@ class MainActivity : AppCompatActivity() {
         btnRow.addView(speedBtn, LinearLayout.LayoutParams(dp(48), dp(48)).apply { setMargins(dp(5), dp(2), dp(5), dp(2)) })
 
         btnRow.addView(makePlayerBtn(IconDrawable.LOCK) { setLocked(true) }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { setMargins(dp(5), 0, dp(5), 0) })
+        btnRow.addView(makePlayerBtn(IconDrawable.COMMENT) { toggleComments() }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { setMargins(dp(5), 0, dp(5), 0) })   // [Comments]
 
         if (Build.VERSION.SDK_INT >= 26 && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
             btnRow.addView(makePlayerBtn(IconDrawable.PIP) { enterPip() }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { setMargins(dp(5), 0, dp(5), 0) })
@@ -1321,6 +1327,25 @@ class MainActivity : AppCompatActivity() {
 
         controls.addView(btnRow, LinearLayout.LayoutParams(-1, -2))
         playerRoot.addView(controls, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+
+        // [Comments] لوحة التعليقات فوق أزرار التحكم
+        commentsPanel = LinearLayout(this); commentsPanel.orientation = LinearLayout.VERTICAL
+        commentsPanel.setBackgroundColor(Color.parseColor("#EE101010")); commentsPanel.isClickable = true
+        commentsPanel.visibility = View.GONE
+        val cHead = LinearLayout(this); cHead.orientation = LinearLayout.HORIZONTAL; cHead.gravity = Gravity.CENTER_VERTICAL
+        cHead.setPadding(dp(14), dp(6), dp(6), dp(6))
+        commentsTitle = TextView(this); commentsTitle.text = "التعليقات"; commentsTitle.setTextColor(Color.WHITE)
+        commentsTitle.textSize = 16f; commentsTitle.typeface = Typeface.DEFAULT_BOLD
+        cHead.addView(commentsTitle, LinearLayout.LayoutParams(0, -2, 1f))
+        val cClose = TextView(this); cClose.text = "✕"; cClose.setTextColor(Color.WHITE); cClose.textSize = 18f
+        cClose.gravity = Gravity.CENTER; cClose.setPadding(dp(14), dp(6), dp(14), dp(6)); cClose.setOnClickListener { hideComments() }
+        cHead.addView(cClose)
+        commentsPanel.addView(cHead)
+        val cScroll = ScrollView(this)
+        commentsList = LinearLayout(this); commentsList.orientation = LinearLayout.VERTICAL; commentsList.setPadding(dp(14), 0, dp(14), dp(10))
+        cScroll.addView(commentsList)
+        commentsPanel.addView(cScroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        playerRoot.addView(commentsPanel, FrameLayout.LayoutParams(-1, dp(200), Gravity.BOTTOM).apply { bottomMargin = dp(112) })
 
         unlockBtn = makePlayerBtn(IconDrawable.UNLOCK, Color.parseColor("#FF0000")) { setLocked(false) }
         unlockBtn.visibility = View.GONE
@@ -1340,6 +1365,39 @@ class MainActivity : AppCompatActivity() {
 
     private fun showHud(text: String) { hudText.text = text; hudText.visibility = View.VISIBLE; ui.removeCallbacks(hideHud); ui.postDelayed(hideHud, 700) }
     private fun showUnlockBtn() { unlockBtn.visibility = View.VISIBLE; ui.removeCallbacks(hideUnlock); ui.postDelayed(hideUnlock, 2500) }
+
+    // [Comments] عرض/إخفاء التعليقات المحفوظة مع الفيديو
+    private fun hideComments() { commentsPanel.visibility = View.GONE }
+
+    private fun toggleComments() {
+        if (commentsPanel.visibility == View.VISIBLE) { hideComments(); return }
+        val c = current ?: return
+        val f = File(File(filesDir, "comments"), "${c.id}.txt")
+        val comments: List<String> = try {
+            if (!f.exists()) emptyList()
+            else f.readText().substringAfter("\n\n", "").split("\n\n──────────\n\n").filter { it.isNotBlank() }
+        } catch (_: Exception) { emptyList() }
+        if (comments.isEmpty()) { showHud("لا توجد تعليقات لهذا الفيديو"); return }
+
+        commentsList.removeAllViews()
+        commentsTitle.text = "التعليقات (" + comments.size + ")"
+        for (cm in comments) {
+            val nl = cm.indexOf('\n')
+            val author = if (nl > 0) cm.substring(0, nl) else ""
+            val body = if (nl > 0) cm.substring(nl + 1) else cm
+            val a = TextView(this); a.text = author; a.setTextColor(Color.parseColor("#AAAAAA")); a.textSize = 12f
+            a.typeface = Typeface.DEFAULT_BOLD; a.setPadding(0, dp(10), 0, dp(2))
+            a.textDirection = View.TEXT_DIRECTION_FIRST_STRONG; a.textAlignment = View.TEXT_ALIGNMENT_TEXT_START
+            val b = TextView(this); b.text = body; b.setTextColor(Color.WHITE); b.textSize = 14f
+            b.textDirection = View.TEXT_DIRECTION_FIRST_STRONG; b.textAlignment = View.TEXT_ALIGNMENT_TEXT_START
+            commentsList.addView(a); commentsList.addView(b)
+        }
+        applyFont(commentsPanel)
+        val lp = commentsPanel.layoutParams as FrameLayout.LayoutParams
+        lp.height = (playerRoot.height * 0.5f).toInt().coerceAtLeast(dp(140))
+        commentsPanel.layoutParams = lp
+        commentsPanel.visibility = View.VISIBLE
+    }
 
     private fun setLocked(l: Boolean) {
         locked = l; buzz(playerRoot)
@@ -1409,7 +1467,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun openPlayer(v: VideoItem) {
         releasePlayer(); current = v; videoW = 0; videoH = 0; locked = false; speedIdx = 2; speedBtn.text = "1x"
-        aspectLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+        aspectLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM   // شاشة كاملة افتراضياً (زر التكبير يبدّل إلى العرض الكامل)
+        hideComments()
         unlockBtn.visibility = View.GONE; hudText.visibility = View.GONE; playerTitle.text = v.title; setPlayIcon(true); seekBar.progress = 0
         controls.visibility = View.VISIBLE; topBar.visibility = View.VISIBLE; playerRoot.visibility = View.VISIBLE; hideSystemBars(true)
         if (surfaceView.holder.surface.isValid) { pending = null; startPlayback(v) } else { pending = v }
@@ -1481,6 +1540,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun closePlayer() {
+        hideComments()
         val p = player; val c = current
         if (p != null && c != null && prepared) {
             saveProgress(p, c)
