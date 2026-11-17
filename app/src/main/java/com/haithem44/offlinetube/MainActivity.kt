@@ -304,6 +304,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var commentsPanel: LinearLayout   // [Comments]
     private lateinit var commentsList: LinearLayout
     private lateinit var commentsTitle: TextView
+    private lateinit var gestureOverlay: View
+    private var commentsOpen = false
+    private var savedResize = AspectRatioFrameLayout.RESIZE_MODE_FIT
     private lateinit var gestures: GestureDetector
     private val pauseDrawable = IconDrawable(IconDrawable.PAUSE, Color.WHITE)
     private val playDrawable = IconDrawable(IconDrawable.PLAY_FILLED, Color.WHITE)
@@ -1238,7 +1241,7 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
-        val gestureOverlay = View(this)
+        gestureOverlay = View(this)
         gestureOverlay.setOnTouchListener { _, e -> gestures.onTouchEvent(e); true }
         playerRoot.addView(gestureOverlay, FrameLayout.LayoutParams(-1, -1))
 
@@ -1338,7 +1341,7 @@ class MainActivity : AppCompatActivity() {
 
         // [Comments] لوحة التعليقات فوق أزرار التحكم
         commentsPanel = LinearLayout(this); commentsPanel.orientation = LinearLayout.VERTICAL
-        commentsPanel.setBackgroundColor(Color.parseColor("#EE101010")); commentsPanel.isClickable = true
+        commentsPanel.setBackgroundColor(Color.parseColor("#0F0F0F")); commentsPanel.isClickable = true
         commentsPanel.visibility = View.GONE
         val cHead = LinearLayout(this); cHead.orientation = LinearLayout.HORIZONTAL; cHead.gravity = Gravity.CENTER_VERTICAL
         cHead.setPadding(dp(14), dp(6), dp(6), dp(6))
@@ -1353,7 +1356,7 @@ class MainActivity : AppCompatActivity() {
         commentsList = LinearLayout(this); commentsList.orientation = LinearLayout.VERTICAL; commentsList.setPadding(dp(14), 0, dp(14), dp(10))
         cScroll.addView(commentsList)
         commentsPanel.addView(cScroll, LinearLayout.LayoutParams(-1, 0, 1f))
-        playerRoot.addView(commentsPanel, FrameLayout.LayoutParams(-1, dp(200), Gravity.BOTTOM).apply { bottomMargin = dp(112) })
+        playerRoot.addView(commentsPanel, FrameLayout.LayoutParams(-1, -1))
 
         unlockBtn = makePlayerBtn(IconDrawable.UNLOCK, Color.parseColor("#FF0000")) { setLocked(false) }
         unlockBtn.visibility = View.GONE
@@ -1375,7 +1378,36 @@ class MainActivity : AppCompatActivity() {
     private fun showUnlockBtn() { unlockBtn.visibility = View.VISIBLE; ui.removeCallbacks(hideUnlock); ui.postDelayed(hideUnlock, 2500) }
 
     // [Comments] عرض/إخفاء التعليقات المحفوظة مع الفيديو
-    private fun hideComments() { commentsPanel.visibility = View.GONE }
+    private fun hideComments() {
+        commentsPanel.visibility = View.GONE
+        if (!commentsOpen) return
+        commentsOpen = false
+        aspectLayout.resizeMode = savedResize
+        applyCommentsLayout(false)
+        requestedOrientation = if (isLandscape) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                               else ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+    }
+
+    /** on=true: الفيديو في الأعلى (16:9) والتعليقات تحته مثل يوتيوب، off=true: الفيديو يملأ الشاشة */
+    private fun applyCommentsLayout(on: Boolean) {
+        val dm = resources.displayMetrics
+        val pw = minOf(dm.widthPixels, dm.heightPixels)
+        val vh = pw * 9 / 16
+        aspectLayout.layoutParams = FrameLayout.LayoutParams(-1, if (on) vh else -1, Gravity.TOP)
+        gestureOverlay.layoutParams = FrameLayout.LayoutParams(-1, if (on) vh else -1, Gravity.TOP)
+        if (on) {
+            controls.measure(
+                View.MeasureSpec.makeMeasureSpec(pw, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+            )
+            val cLp = FrameLayout.LayoutParams(-1, -2, Gravity.TOP)
+            cLp.topMargin = (vh - controls.measuredHeight).coerceAtLeast(0)
+            controls.layoutParams = cLp
+            commentsPanel.layoutParams = FrameLayout.LayoutParams(-1, -1).apply { topMargin = vh }
+        } else {
+            controls.layoutParams = FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM)
+        }
+    }
 
     private fun toggleComments() {
         if (commentsPanel.visibility == View.VISIBLE) { hideComments(); return }
@@ -1401,9 +1433,12 @@ class MainActivity : AppCompatActivity() {
             commentsList.addView(a); commentsList.addView(b)
         }
         applyFont(commentsPanel)
-        val lp = commentsPanel.layoutParams as FrameLayout.LayoutParams
-        lp.height = (playerRoot.height * 0.5f).toInt().coerceAtLeast(dp(140))
-        commentsPanel.layoutParams = lp
+        savedResize = aspectLayout.resizeMode
+        aspectLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+        commentsOpen = true
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        controls.visibility = View.VISIBLE; topBar.visibility = View.VISIBLE
+        applyCommentsLayout(true)
         commentsPanel.visibility = View.VISIBLE
     }
 
