@@ -58,6 +58,7 @@ import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import android.view.TextureView
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
@@ -341,6 +342,11 @@ class MainActivity : AppCompatActivity() {
     private val audio by lazy { getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     private val hideHud = Runnable { hudText.visibility = View.GONE }
     private val hideUnlock = Runnable { if (locked) unlockBtn.visibility = View.GONE }
+
+    // ---- مشغّل المعاينة داخل بطاقة القائمة ----
+    private var inlinePlayer: ExoPlayer? = null
+    private var inlineFrame: FrameLayout? = null
+    private var inlineItem: VideoItem? = null
 
     private fun saveProgress(p: ExoPlayer, c: VideoItem) {
         try {
@@ -791,6 +797,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refresh() {
+        stopInline()
         if (animatedIds.size > 3000) animatedIds.clear()
         val s = query.trim().lowercase()
         var list: List<VideoItem> = all.filter { s.isEmpty() || it.title.lowercase().contains(s) }
@@ -1193,6 +1200,7 @@ class MainActivity : AppCompatActivity() {
 
         if (watched) {
             val dim = View(this)
+            dim.tag = "w_dim"
             dim.setBackgroundColor(Color.parseColor("#99000000"))
             f.addView(dim, FrameLayout.LayoutParams(-1, -1))
         }
@@ -1224,6 +1232,7 @@ class MainActivity : AppCompatActivity() {
 
         if (watched) {
             val tg = TextView(this)
+            tg.tag = "w_tag"
             tg.text = "تم المشاهدة"
             tg.setTextColor(Color.WHITE)
             tg.textSize = 14f
@@ -1251,7 +1260,101 @@ class MainActivity : AppCompatActivity() {
                 rightMargin = dp(8); topMargin = dp(8)
             })
         }
+
+        // ---- زر تشغيل المعاينة داخل البطاقة + زر التكبير ----
+        val playBtn = ImageView(this)
+        playBtn.tag = "inline_play"
+        playBtn.setImageDrawable(IconDrawable(IconDrawable.PLAY_FILLED, Color.WHITE))
+        playBtn.setPadding(dp(8), dp(8), dp(8), dp(8))
+        playBtn.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.parseColor("#99000000")) }
+
+        val expandBtn = ImageView(this)
+        expandBtn.tag = "inline_expand"
+        expandBtn.setImageDrawable(IconDrawable(IconDrawable.EXPAND, Color.WHITE))
+        expandBtn.setPadding(dp(8), dp(8), dp(8), dp(8))
+        expandBtn.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.parseColor("#99000000")) }
+        expandBtn.visibility = View.GONE
+
+        playBtn.setOnClickListener { startInline(v, f, playBtn, expandBtn) }
+        expandBtn.setOnClickListener {
+            stopInline()            // يحفظ المكان الحالي
+            pendingFullscreen = true
+            openPlayer(v)           // يكمل من نفس الموضع بملء الشاشة
+        }
+        f.addView(playBtn, FrameLayout.LayoutParams(dp(38), dp(38), Gravity.RIGHT or Gravity.BOTTOM).apply {
+            rightMargin = dp(8); bottomMargin = dp(12)
+        })
+        f.addView(expandBtn, FrameLayout.LayoutParams(dp(38), dp(38), Gravity.LEFT or Gravity.TOP).apply {
+            leftMargin = dp(8); topMargin = dp(8)
+        })
+        // إيقاف المعاينة تلقائياً عند خروج البطاقة من الشاشة أثناء التمرير
+        f.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(x: View) {}
+            override fun onViewDetachedFromWindow(x: View) { if (inlineFrame === f) stopInline() }
+        })
         return f
+    }
+
+    private fun stopInline() {
+        val p = inlinePlayer; val v = inlineItem; val f = inlineFrame
+        inlinePlayer = null; inlineItem = null; inlineFrame = null
+        if (p != null && v != null) {
+            try {
+                val d = p.duration
+                val ended = p.playbackState == Player.STATE_ENDED
+                if (d != C.TIME_UNSET && d > 0) prefs.savePosition(v.id, if (ended) 0L else p.currentPosition, d, ended)
+            } catch (_: Exception) {}
+        }
+        try { p?.release() } catch (_: Exception) {}
+        f?.let { fr ->
+            fr.findViewWithTag<View>("inline_tv")?.let { fr.removeView(it) }
+            fr.findViewWithTag<View>("inline_expand")?.visibility = View.GONE
+            fr.findViewWithTag<View>("w_dim")?.visibility = View.VISIBLE
+            fr.findViewWithTag<View>("w_tag")?.visibility = View.VISIBLE
+            (fr.findViewWithTag<View>("inline_play") as? ImageView)
+                ?.setImageDrawable(IconDrawable(IconDrawable.PLAY_FILLED, Color.WHITE))
+        }
+    }
+
+    private fun startInline(v: VideoItem, f: FrameLayout, playBtn: ImageView, expandBtn: View) {
+        // الضغط مرة ثانية على نفس الفيديو = إيقاف/تشغيل
+        if (inlineItem?.id == v.id && inlineFrame === f) {
+            inlinePlayer?.let { if (it.isPlaying) it.pause() else it.play() }
+            return
+        }
+        stopInline()
+
+        val arl = AspectRatioFrameLayout(this)
+        arl.tag = "inline_tv"
+        arl.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+        val tv = TextureView(this)
+        arl.addView(tv, FrameLayout.LayoutParams(-1, -1))
+        f.addView(arl, 2, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
+
+        // إخفاء تضليل "تم المشاهدة" أثناء المعاينة
+        f.findViewWithTag<View>("w_dim")?.visibility = View.GONE
+        f.findViewWithTag<View>("w_tag")?.visibility = View.GONE
+
+        val p = ExoPlayer.Builder(this).build()
+        inlinePlayer = p; inlineFrame = f; inlineItem = v
+        p.addListener(object : Player.Listener {
+            override fun onVideoSizeChanged(s: VideoSize) {
+                if (s.width > 0 && s.height > 0) arl.setAspectRatio(s.width.toFloat() * s.pixelWidthHeightRatio / s.height)
+            }
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                playBtn.setImageDrawable(IconDrawable(if (isPlaying) IconDrawable.PAUSE else IconDrawable.PLAY_FILLED, Color.WHITE))
+            }
+        })
+
+        val saved = prefs.position(v.id)
+        val dur = if (v.duration > 0) v.duration else prefs.duration(v.id)
+        val startPos = if (saved > 0 && (dur <= 0 || saved < dur - 3000)) saved else 0L
+
+        p.setVideoTextureView(tv)
+        p.setMediaItem(MediaItem.fromUri(v.uri), startPos)
+        p.playWhenReady = true
+        p.prepare()
+        expandBtn.visibility = View.VISIBLE
     }
 
     private fun loadThumb(v: VideoItem, iv: ImageView, shimmer: View?) {
@@ -1619,6 +1722,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStop() {
         super.onStop()
+        stopInline()
         val p = player
         val c = current
         if (p != null && c != null && prepared) {
@@ -1627,6 +1731,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openPlayer(v: VideoItem) {
+        stopInline()
         releasePlayer(); current = v; videoW = 0; videoH = 0; locked = false; speedIdx = 2; speedBtn.text = "1x"
         aspectLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
         hideComments()
@@ -1758,6 +1863,7 @@ class MainActivity : AppCompatActivity() {
             try { contentResolver.unregisterContentObserver(mediaObserver) } catch (_: Exception) {}
             observerRegistered = false
         }
+        stopInline()
         releasePlayer(); ytTab.destroy(); pool.shutdown(); super.onDestroy()
     }
 
@@ -1900,483 +2006,4 @@ class YoutubeTab(
         view.addView(web, FrameLayout.LayoutParams(-1, -1))
 
         bar.max = 100; bar.visibility = View.GONE
-        view.addView(bar, FrameLayout.LayoutParams(-1, dp(4), Gravity.TOP))
-
-        status.setTextColor(Color.WHITE); status.textSize = 13f; status.gravity = Gravity.CENTER
-        status.setPadding(dp(14), dp(8), dp(14), dp(8))
-        status.background = GradientDrawable().apply { setColor(Color.parseColor("#CC000000")); cornerRadius = dp(12).toFloat() }
-        status.visibility = View.GONE
-        view.addView(status, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
-            bottomMargin = dp(76); leftMargin = dp(16); rightMargin = dp(16)
-        })
-
-        btn.text = BTN_TEXT
-        btn.setTextColor(Color.WHITE); btn.textSize = 15f; btn.gravity = Gravity.CENTER
-        btn.typeface = Typeface.DEFAULT_BOLD
-        btn.setPadding(dp(20), dp(12), dp(20), dp(12))
-        btnBg.setColor(Color.parseColor("#FF0000")); btnBg.cornerRadius = dp(26).toFloat()
-        btn.background = btnBg
-        btn.elevation = dp(8).toFloat()
-        btn.visibility = View.GONE
-        btn.setOnClickListener { onButton() }
-        // ضغطة طويلة = إيقاف مؤقت لكل التنزيلات (الأجزاء المكتملة تبقى للاستئناف)
-        btn.setOnLongClickListener {
-            jobs.values.forEach { it.cancelled = true }
-            setStatus("تم الإيقاف — اضغط تنزيل مجدداً للاستئناف", true); true
-        }
-        view.addView(btn, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(16) })
-    }
-
-    fun onShown() {
-        if (!loadedOnce) { loadedOnce = true; web.loadUrl(HOME) } else web.onResume()
-        refreshBtn()
-    }
-
-    fun onHidden() {
-        web.evaluateJavascript("document.querySelectorAll('video').forEach(function(v){v.pause()})", null)
-        hideCustom()
-        web.onPause()
-    }
-
-    fun handleBack(): Boolean {
-        if (customView != null) { hideCustom(); return true }
-        if (web.canGoBack()) { web.goBack(); return true }
-        return false
-    }
-
-    fun destroy() {
-        jobs.values.forEach { it.cancelled = true }
-        dlPool.shutdown()
-        hideCustom()
-        try { web.destroy() } catch (_: Exception) {}
-    }
-
-    @Suppress("DEPRECATION")
-    private fun setImmersive(on: Boolean) {
-        act.window.decorView.systemUiVisibility = if (on) {
-            View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
-                View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-        } else View.SYSTEM_UI_FLAG_VISIBLE
-        if (on) act.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        else act.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-    }
-
-    private fun hideCustom() {
-        val v = customView ?: return
-        (act.window.decorView as FrameLayout).removeView(v)
-        customView = null
-        customCb?.onCustomViewHidden(); customCb = null
-        act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        setImmersive(false)
-    }
-
-    private fun videoUrlOf(u: String?): String? {
-        if (u == null || !(u.contains("youtube.com") || u.contains("youtu.be"))) return null
-        val id = Regex("[?&]v=([\\w-]{11})").find(u)?.groupValues?.get(1)
-            ?: Regex("/shorts/([\\w-]{11})").find(u)?.groupValues?.get(1)
-            ?: Regex("youtu\\.be/([\\w-]{11})").find(u)?.groupValues?.get(1)
-        return id?.let { "https://www.youtube.com/watch?v=$it" }
-    }
-
-    private fun vidOf(url: String?): String? =
-        url?.let { Regex("v=([\\w-]{11})").find(it)?.groupValues?.get(1) }
-
-    /** يرجع الفيديو إن كان منزَّلاً وملفه ما زال موجوداً، وإلا يمسح السجل */
-    private fun downloadedItem(vid: String): VideoItem? {
-        val id = dlPrefs.getLong(vid, -1L)
-        if (id < 0) return null
-        val uri = Uri.withAppendedPath(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id.toString())
-        var item: VideoItem? = null
-        try {
-            act.contentResolver.query(
-                uri,
-                arrayOf(MediaStore.Video.Media.DISPLAY_NAME, MediaStore.Video.Media.DURATION),
-                null, null, null
-            )?.use { c ->
-                if (c.moveToFirst()) item = VideoItem(id, (c.getString(0) ?: "video").substringBeforeLast('.'), c.getLong(1), uri)
-            }
-        } catch (_: Exception) {}
-        if (item == null) dlPrefs.edit().remove(vid).apply()
-        return item
-    }
-
-    private fun updateButton(url: String?) { currentVideoUrl = videoUrlOf(url); refreshBtn() }
-
-    private fun refreshBtn() = ui.post {
-        val n = jobs.size
-        val vid = vidOf(currentVideoUrl)
-        val done = if (vid != null && !jobs.containsKey(vid)) downloadedItem(vid) else null
-        btn.text = when {
-            done != null -> "✓ تم التنزيل — اضغط للخيارات"
-            n > 0 -> "$BTN_TEXT  ($n ⏳)"
-            else -> BTN_TEXT
-        }
-        btnBg.setColor(Color.parseColor(if (done != null) "#2E7D32" else "#FF0000"))
-        btn.visibility = if (currentVideoUrl != null || n > 0) View.VISIBLE else View.GONE
-        bar.visibility = if (n > 0) View.VISIBLE else View.GONE
-        view.keepScreenOn = n > 0
-    }
-
-    private fun endJob(job: Job) { jobs.remove(job.id); refreshBtn() }
-
-    private fun setStatus(s: String, autoHide: Boolean = false) {
-        ui.post {
-            status.setOnClickListener(null); status.isClickable = false
-            status.text = s; status.visibility = View.VISIBLE
-            if (autoHide) ui.postDelayed({ status.visibility = View.GONE }, 4000)
-        }
-    }
-
-    private fun fail(e: Throwable) {
-        if (e is Cancelled) setStatus("تم الإيقاف — يمكنك الاستئناف بالضغط على تنزيل", true)
-        else setStatus("✗ فشل: ${e.message ?: e.javaClass.simpleName}")
-    }
-
-    private fun onButton() {
-        val url = currentVideoUrl
-        if (url == null) { Toast.makeText(act, "افتح فيديو أولاً", Toast.LENGTH_SHORT).show(); return }
-        if (folder().isEmpty()) {
-            Toast.makeText(act, "اختر مجلد الفيديوهات أولاً (زر المجلد)", Toast.LENGTH_LONG).show(); return
-        }
-        val vid = vidOf(url) ?: return
-        if (jobs.containsKey(vid)) { Toast.makeText(act, "هذا الفيديو قيد التنزيل بالفعل", Toast.LENGTH_SHORT).show(); return }
-
-        val done = downloadedItem(vid)
-        if (done != null) {
-            AlertDialog.Builder(act)
-                .setTitle("تم تنزيله سابقاً")
-                .setMessage("«${done.title.take(40)}» موجود في مكتبتك.")
-                .setPositiveButton("تشغيل") { _, _ -> onOpen(done) }
-                .setNegativeButton("إعادة التنزيل") { _, _ -> startDownload(url, vid) }
-                .setNeutralButton("إلغاء", null)
-                .show()
-            return
-        }
-        startDownload(url, vid)
-    }
-
-    private fun startDownload(url: String, vid: String) {
-        if (jobs.isEmpty()) ui.post { bar.progress = 0 }
-        val job = Job(vid); jobs[vid] = job; refreshBtn()
-        Toast.makeText(act, "أُضيف إلى التنزيلات", Toast.LENGTH_SHORT).show()
-        dlPool.execute {
-            var handedOff = false
-            try {
-                setStatus("جارٍ جلب معلومات الفيديو...")
-                val info = StreamInfo.getInfo(ServiceList.YouTube, url)
-                val options = buildOptions(info)
-                if (options.isEmpty()) throw IllegalStateException("لا توجد صيغة قابلة للتنزيل لهذا الفيديو")
-                handedOff = true
-                if (options.size == 1) runDownload(job, info, url, options[0])
-                else ui.post { askQuality(job, info, url, options) }
-            } catch (e: Exception) { fail(e) }
-            finally { if (!handedOff) endJob(job) }
-        }
-    }
-
-    private fun heightOf(res: String?): Int = Regex("\\d+").find(res ?: "")?.value?.toIntOrNull() ?: 0
-
-    private fun buildOptions(info: StreamInfo): List<Option> {
-        val map = LinkedHashMap<Int, Option>()
-        for (v in info.videoStreams.filter { it.isUrl }) {
-            val h = heightOf(v.resolution)
-            if (!map.containsKey(h)) map[h] = Option(h.toString() + "p", v, null, h)
-        }
-        val audio = info.audioStreams
-            .filter { it.isUrl && it.format == NpFormat.M4A }
-            .maxByOrNull { it.averageBitrate }
-        if (audio != null) {
-            for (v in info.videoOnlyStreams.filter { it.isUrl && it.format == NpFormat.MPEG_4 }) {
-                val h = heightOf(v.resolution)
-                if (h > 0 && !map.containsKey(h)) map[h] = Option(h.toString() + "p", v, audio, h)
-            }
-        }
-        return map.values.sortedByDescending { it.height }
-    }
-
-    private fun askQuality(job: Job, info: StreamInfo, url: String, options: List<Option>) {
-        val labels = options.map { it.label }.toTypedArray()
-        AlertDialog.Builder(act)
-            .setTitle("اختر الجودة")
-            .setItems(labels) { _, i -> dlPool.execute { runDownload(job, info, url, options[i]) } }
-            .setOnCancelListener { endJob(job) }
-            .show()
-    }
-
-    private fun runDownload(job: Job, info: StreamInfo, url: String, opt: Option) {
-        val title = info.name.replace(Regex("[\\\\/:*?\"<>|]"), "_").take(100)
-        val tmpDir = File(act.filesDir, "yt_dl").apply { mkdirs() }
-        val key = "${job.id}_${opt.height}"
-        val vTmp = File(tmpDir, "${key}_v.part")
-        val aTmp = File(tmpDir, "${key}_a.part")
-        val outTmp = File(tmpDir, "${key}_out.mp4")
-        val tag = title.take(18)
-        var success = false
-        try {
-            val finalFile: File
-            val audioStream = opt.audio
-            if (audioStream == null) {
-                fetch(opt.video.content, vTmp, tag, 0, 80, job)
-                finalFile = vTmp
-            } else {
-                fetch(opt.video.content, vTmp, tag, 0, 70, job)
-                fetch(audioStream.content, aTmp, "$tag (صوت)", 70, 80, job)
-                setStatus("جارٍ دمج الصوت والصورة...")
-                mux(vTmp, aTmp, outTmp, job)
-                finalFile = outTmp
-            }
-            ui.post { bar.progress = 85 }
-            setStatus("جارٍ حفظ الفيديو في الهاتف...")
-            val saved = saveToStore(title, finalFile)
-            success = true
-            dlPrefs.edit().putLong(job.id, saved.first).apply()
-
-            setStatus("جارٍ جلب التعليقات (50)...")
-            ui.post { bar.progress = 90 }
-            var commentsCount = 0
-            val savedCommentsOk = try {
-                val comments = fetchComments(url)
-                commentsCount = comments.size
-                saveComments(saved.first, title, comments)
-            } catch (e: Exception) { false }
-
-            val item = VideoItem(saved.first, title, info.duration * 1000L, saved.second)
-            ui.post {
-                bar.progress = 100
-                status.text = if (savedCommentsOk && commentsCount > 0)
-                    "✓ تم تنزيل «$tag» و $commentsCount تعليق — اضغط للتشغيل ▶"
-                else "✓ تم تنزيل «$tag» — اضغط للتشغيل ▶ (تعذّر جلب التعليقات)"
-                status.visibility = View.VISIBLE
-                status.setOnClickListener {
-                    status.visibility = View.GONE; status.setOnClickListener(null); status.isClickable = false
-                    onOpen(item)
-                }
-                onDone()
-            }
-        } catch (e: Exception) {
-            fail(e)
-        } finally {
-            if (success) listOf(vTmp, aTmp, outTmp).forEach { it.delete(); File(it.path + ".meta").delete() }
-            endJob(job)
-        }
-    }
-
-    private fun report(label: String, pos: Long, total: Long, from: Int, to: Int) {
-        val frac = if (total > 0) pos.toDouble() / total else 0.0
-        val pct = from + ((to - from) * frac).toInt()
-        ui.post { bar.progress = pct }
-        val mb = 1024.0 * 1024.0
-        setStatus(String.format(Locale.US, "%s %d%% — %.1f / %.1f MB", label, (frac * 100).toInt(), pos / mb, maxOf(total, 0L) / mb))
-    }
-
-    /** تنزيل متوازي بأجزاء مع تسجيل الأجزاء المكتملة في ملف .meta للاستئناف */
-    private fun fetch(link: String, dest: File, label: String, from: Int, to: Int, job: Job) {
-        // 1) حجم الملف
-        val c0 = URL(link).openConnection() as HttpURLConnection
-        val total: Long
-        try {
-            c0.setRequestProperty("User-Agent", UA); c0.setRequestProperty("Range", "bytes=0-0")
-            c0.connectTimeout = 20000; c0.readTimeout = 20000
-            total = c0.getHeaderField("Content-Range")?.substringAfter('/')?.trim()?.toLongOrNull()
-                ?: throw IOException("تعذّر معرفة حجم الملف")
-        } finally { c0.disconnect() }
-
-        // 2) الأجزاء المكتملة سابقاً (استئناف)
-        val meta = File(dest.path + ".meta")
-        val n = ((total + CHUNK - 1) / CHUNK).toInt()
-        fun chunkLen(i: Int): Long = minOf(CHUNK, total - i * CHUNK)
-        val done = java.util.Collections.synchronizedSet(HashSet<Int>())
-        val resumable = dest.exists() && dest.length() == total && meta.exists() &&
-                meta.readLines().firstOrNull()?.toLongOrNull() == total
-        if (resumable) {
-            meta.readLines().getOrNull(1)?.split(",")?.mapNotNullTo(done) { it.toIntOrNull() }
-        } else {
-            RandomAccessFile(dest, "rw").use { it.setLength(total) }
-            meta.delete()
-        }
-        var initial = 0L
-        for (i in done.toList()) initial += chunkLen(i)
-        val bytes = AtomicLong(initial)
-        val next = AtomicInteger(0)
-        val error = AtomicReference<Throwable?>(null)
-
-        // 3) عمّال التحميل المتوازي
-        val workers = (1..THREADS).map {
-            Thread {
-                try {
-                    RandomAccessFile(dest, "rw").use { raf ->
-                        val buf = ByteArray(64 * 1024)
-                        while (!job.cancelled && error.get() == null) {
-                            val i = next.getAndIncrement(); if (i >= n) break
-                            if (done.contains(i)) continue
-                            val s = i * CHUNK; val len = chunkLen(i)
-                            var off = 0L; var attempt = 0
-                            while (off < len) {
-                                try {
-                                    val conn = URL(link).openConnection() as HttpURLConnection
-                                    conn.setRequestProperty("User-Agent", UA)
-                                    conn.setRequestProperty("Range", "bytes=${s + off}-${s + len - 1}")
-                                    conn.connectTimeout = 20000; conn.readTimeout = 20000
-                                    if (conn.responseCode != 206) throw IOException("HTTP ${conn.responseCode}")
-                                    conn.inputStream.use { inp ->
-                                        while (true) {
-                                            if (job.cancelled) throw Cancelled()
-                                            val r = inp.read(buf); if (r < 0) break
-                                            raf.seek(s + off); raf.write(buf, 0, r)
-                                            off += r; bytes.addAndGet(r.toLong())
-                                        }
-                                    }
-                                    if (off < len) throw IOException("short")
-                                } catch (e: IOException) {
-                                    if (++attempt > 4) throw e
-                                    Thread.sleep(800)
-                                }
-                            }
-                            synchronized(done) {
-                                done.add(i)
-                                meta.writeText("$total\n" + done.joinToString(","))
-                            }
-                        }
-                    }
-                } catch (e: Cancelled) {
-                } catch (e: Throwable) { error.compareAndSet(null, e) }
-            }.also { it.start() }
-        }
-
-        // 4) متابعة التقدم
-        while (workers.any { it.isAlive }) {
-            report(label, bytes.get(), total, from, to)
-            try { Thread.sleep(400) } catch (_: InterruptedException) { job.cancelled = true }
-        }
-        workers.forEach { it.join() }
-        if (job.cancelled) throw Cancelled()
-        error.get()?.let { throw it }
-        report(label, total, total, from, to)
-    }
-
-    private fun mux(videoF: File, audioF: File, out: File, job: Job) {
-        val vEx = MediaExtractor(); val aEx = MediaExtractor()
-        var muxer: MediaMuxer? = null
-        try {
-            vEx.setDataSource(videoF.absolutePath); aEx.setDataSource(audioF.absolutePath)
-            fun pick(ex: MediaExtractor, prefix: String): Int {
-                for (i in 0 until ex.trackCount) {
-                    if (ex.getTrackFormat(i).getString(MediaFormat.KEY_MIME)?.startsWith(prefix) == true) return i
-                }
-                throw IllegalStateException("لا يوجد مسار $prefix")
-            }
-            val vt = pick(vEx, "video/"); val at = pick(aEx, "audio/")
-            vEx.selectTrack(vt); aEx.selectTrack(at)
-            val m = MediaMuxer(out.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-            muxer = m
-            val vo = m.addTrack(vEx.getTrackFormat(vt)); val ao = m.addTrack(aEx.getTrackFormat(at))
-            m.start()
-            val buf = java.nio.ByteBuffer.allocate(4 * 1024 * 1024)
-            val bi = MediaCodec.BufferInfo()
-            while (true) {
-                if (job.cancelled) throw Cancelled()
-                val vTime = vEx.sampleTime; val aTime = aEx.sampleTime
-                if (vTime < 0 && aTime < 0) break
-                val useV = aTime < 0 || (vTime in 0..aTime)
-                val ex = if (useV) vEx else aEx
-                val tr = if (useV) vo else ao
-                buf.clear()
-                val size = ex.readSampleData(buf, 0)
-                if (size < 0) { ex.advance(); continue }
-                bi.set(0, size, ex.sampleTime, ex.sampleFlags)
-                m.writeSampleData(tr, buf, bi)
-                ex.advance()
-            }
-            m.stop()
-        } finally {
-            try { muxer?.release() } catch (_: Exception) {}
-            try { vEx.release() } catch (_: Exception) {}
-            try { aEx.release() } catch (_: Exception) {}
-        }
-    }
-
-    /** ينسخ الملف النهائي إلى المجلد المختار ويرجع (معرّف MediaStore، الرابط) */
-    private fun saveToStore(title: String, src: File): Pair<Long, Uri> {
-        val resolver = act.contentResolver
-        val folderPath = folder()
-        val base = Environment.getExternalStorageDirectory().absolutePath.trimEnd('/')
-
-        if (Build.VERSION.SDK_INT >= 29) {
-            fun insert(r: String): Uri? {
-                val cv = ContentValues().apply {
-                    put(MediaStore.Video.Media.DISPLAY_NAME, "$title.mp4")
-                    put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-                    put(MediaStore.Video.Media.RELATIVE_PATH, r)
-                    put(MediaStore.Video.Media.IS_PENDING, 1)
-                }
-                return resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, cv)
-            }
-            val rel = if (folderPath.startsWith(base))
-                folderPath.removePrefix(base).trim('/') + "/" else "Movies/OfflineTube/"
-            var uri: Uri? = try { insert(rel) } catch (e: Exception) { null }
-            if (uri == null) uri = insert("Movies/OfflineTube/")
-            val target = uri ?: throw IllegalStateException("تعذّر إنشاء ملف الحفظ")
-            try {
-                val o = resolver.openOutputStream(target) ?: throw IllegalStateException("تعذّر فتح ملف الحفظ")
-                o.use { os -> src.inputStream().use { it.copyTo(os, 256 * 1024) } }
-            } catch (e: Exception) {
-                resolver.delete(target, null, null); throw e
-            }
-            val cv = ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }
-            resolver.update(target, cv, null, null)
-            return Pair(ContentUris.parseId(target), target)
-        }
-
-        var dest = File(folderPath, "$title.mp4")
-        dest.parentFile?.mkdirs()
-        if (dest.exists()) dest = File(folderPath, title + "_" + System.currentTimeMillis() + ".mp4")
-        src.inputStream().use { i -> FileOutputStream(dest).use { o -> i.copyTo(o, 256 * 1024) } }
-        val latch = CountDownLatch(1)
-        var scanned: Uri? = null
-        MediaScannerConnection.scanFile(act, arrayOf(dest.absolutePath), null) { _, u -> scanned = u; latch.countDown() }
-        latch.await(5, TimeUnit.SECONDS)
-        val u = scanned
-        val id = if (u != null) { try { ContentUris.parseId(u) } catch (_: Exception) { 0L } } else 0L
-        val realId = if (id > 0) id else (dest.absolutePath.hashCode().toLong() and 0x7FFFFFFF)
-        return Pair(realId, u ?: Uri.fromFile(dest))
-    }
-
-    // ---------------- التعليقات ----------------
-    private fun fetchComments(url: String): List<String> {
-        val out = ArrayList<String>()
-
-        fun add(items: List<CommentsInfoItem>) {
-            for (c in items) {
-                if (out.size >= MAX_COMMENTS) return
-                val text = c.commentText?.content?.trim().orEmpty()
-                if (text.isEmpty()) continue
-                val author = c.uploaderName?.ifBlank { "مجهول" } ?: "مجهول"
-                out.add("$author (👍 ${c.likeCount}):\n$text")
-            }
-        }
-
-        try {
-            val ci = CommentsInfo.getInfo(url)
-            add(ci.relatedItems)
-
-            var page = ci.nextPage
-            while (out.size < MAX_COMMENTS && page != null) {
-                val more = CommentsInfo.getMoreItems(ServiceList.YouTube, url, page)
-                add(more.items)
-                page = more.nextPage
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-
-        return out
-    }
-
-    private fun saveComments(mediaId: Long, title: String, comments: List<String>): Boolean = try {
-        val dir = File(act.filesDir, "comments").apply { mkdirs() }
-        File(dir, "$mediaId.txt").writeText(
-            title + "\n\n" + comments.joinToString("\n\n──────────\n\n")
-        )
-        true
-    } catch (_: Exception) { false }
-}
+        view.addView(bar, FrameLayout.LayoutParams(-1, dp(4),
