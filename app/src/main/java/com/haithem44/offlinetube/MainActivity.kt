@@ -246,6 +246,7 @@ class MainActivity : AppCompatActivity() {
     private var deleteNeedsRetry = false
     private var pendingOpenId: Long = -1L
     private var pendingRestoreComments = false
+    private var pendingFullscreen = false
     private var observerRegistered = false
 
     private val tabNames = arrayOf("الصفحة الرئيسية", "تابع المشاهدة", "الأطول", "تمت المشاهدة", "Shorts", "YouTube")
@@ -414,6 +415,7 @@ class MainActivity : AppCompatActivity() {
         query = savedInstanceState?.getString("query") ?: ""
         pendingOpenId = savedInstanceState?.let { if (it.getBoolean("player_open")) it.getLong("current_id", -1L) else -1L } ?: -1L
         pendingRestoreComments = savedInstanceState?.getBoolean("comments_open") == true
+        pendingFullscreen = savedInstanceState?.getBoolean("fullscreen") == true
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -527,6 +529,7 @@ class MainActivity : AppCompatActivity() {
         outState.putInt("tab", tab)
         outState.putString("query", query)
         outState.putBoolean("player_open", playerRoot.visibility == View.VISIBLE)
+        outState.putBoolean("fullscreen", fullscreen)
         outState.putBoolean("comments_open", commentsOpen && commentsPanel.visibility == View.VISIBLE)
         current?.let { c ->
             outState.putLong("current_id", c.id)
@@ -1606,6 +1609,14 @@ class MainActivity : AppCompatActivity() {
         else if (!locked) { controls.visibility = View.VISIBLE; topBar.visibility = View.VISIBLE }
     }
 
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (playerRoot.visibility == View.VISIBLE) {
+            playerRoot.requestApplyInsets()
+            applyCommentsLayout(commentsOpen)
+        }
+    }
+
     override fun onStop() {
         super.onStop()
         val p = player
@@ -1620,7 +1631,7 @@ class MainActivity : AppCompatActivity() {
         aspectLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
         hideComments()
         unlockBtn.visibility = View.GONE; hudText.visibility = View.GONE; playerTitle.text = v.title; setPlayIcon(true); seekBar.progress = 0
-        controls.visibility = View.VISIBLE; topBar.visibility = View.VISIBLE; playerRoot.visibility = View.VISIBLE; setFullscreen(false)
+        controls.visibility = View.VISIBLE; topBar.visibility = View.VISIBLE; playerRoot.visibility = View.VISIBLE; setFullscreen(pendingFullscreen); pendingFullscreen = false
 
         // شارة عدد التعليقات
         commentsCount = countComments(v.id)
@@ -1654,6 +1665,10 @@ class MainActivity : AppCompatActivity() {
             override fun onVideoSizeChanged(videoSize: VideoSize) {
                 videoW = videoSize.width
                 videoH = videoSize.height
+                if (fullscreen && videoW > videoH && !isLandscape && !commentsOpen) {
+                    isLandscape = true
+                    requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                }
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
