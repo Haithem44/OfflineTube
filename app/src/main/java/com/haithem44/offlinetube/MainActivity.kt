@@ -1846,9 +1846,8 @@ class YoutubeTab(
         private var inited = false
         private const val HOME = "https://m.youtube.com/"
         private const val UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0"
-        private const val CHUNK = 1L * 1024 * 1024   // أجزاء أصغر = توزيع أفضل
-        private const val THREADS = 6                 // لكل ملف (الصوت والصورة معاً = 12)
-        private const val MAX_PARALLEL_VIDEOS = 3
+        private const val THREADS = 6                 // كل ملف يُقسَّم إلى 6 أجزاء متساوية (الصوت والصورة معاً = 12)
+        private const val MAX_PARALLEL_VIDEOS = 5     // 5 فيديوهات في نفس الوقت
         private const val BTN_TEXT = "⬇ تنزيل الفيديو + 50 تعليق"
     }
 
@@ -2006,7 +2005,7 @@ class YoutubeTab(
         jobs.values.forEach { it.cancelled = true }
         ui.removeCallbacks(ticker)
         dlPool.shutdown()
-               infoPool.shutdown()
+        infoPool.shutdown()
         hideCustom()
         try { web.destroy() } catch (_: Exception) {}
     }
@@ -2293,11 +2292,12 @@ class YoutubeTab(
         } finally { c0.disconnect() }
     }
 
-    /** تنزيل متوازي بأجزاء مع تسجيل الأجزاء المكتملة في ملف .meta للاستئناف */
+    /** تنزيل متوازي: الملف يُقسَّم إلى THREADS (6) أجزاء متساوية مع تسجيل المكتمل في ملف .meta للاستئناف */
     private fun fetch(link: String, dest: File, job: Job, total: Long) {
         val meta = File(dest.path + ".meta")
-        val n = ((total + CHUNK - 1) / CHUNK).toInt()
-        fun chunkLen(i: Int): Long = minOf(CHUNK, total - i * CHUNK)
+        val chunk = (total + THREADS - 1) / THREADS          // حجم الجزء = الحجم الكلي ÷ 6
+        val n = ((total + chunk - 1) / chunk).toInt()
+        fun chunkLen(i: Int): Long = minOf(chunk, total - i * chunk)
         val done = java.util.Collections.synchronizedSet(HashSet<Int>())
         val resumable = dest.exists() && dest.length() == total && meta.exists() &&
                 meta.readLines().firstOrNull()?.toLongOrNull() == total
@@ -2321,7 +2321,7 @@ class YoutubeTab(
                         while (!job.cancelled && error.get() == null) {
                             val i = next.getAndIncrement(); if (i >= n) break
                             if (done.contains(i)) continue
-                            val s = i * CHUNK; val len = chunkLen(i)
+                            val s = i * chunk; val len = chunkLen(i)
                             var off = 0L; var attempt = 0
                             while (off < len) {
                                 try {
