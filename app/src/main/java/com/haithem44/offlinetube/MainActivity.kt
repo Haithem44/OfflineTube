@@ -97,12 +97,17 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.OutputStream
+import java.io.RandomAccessFile
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.comments.CommentsInfo
@@ -213,7 +218,7 @@ class MainActivity : AppCompatActivity() {
 
     private val all = ArrayList<VideoItem>()
     private val shown = ArrayList<VideoItem>()
-    
+
     // مجموعة لتتبع الفيديوهات التي تم فتح تعليقاتها في القائمة
     private val expandedCommentIds = HashSet<Long>()
 
@@ -327,6 +332,7 @@ class MainActivity : AppCompatActivity() {
     private var userSeeking = false
     private var lastSaveTime = 0L
     private var locked = false
+    private var fullscreen = false
     private val speeds = floatArrayOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
     private var speedIdx = 2
     private var gestureMode = 0
@@ -412,7 +418,10 @@ class MainActivity : AppCompatActivity() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (playerRoot.visibility == View.VISIBLE) {
-                    if (locked) showUnlockBtn() else if (commentsPanel.visibility == View.VISIBLE) hideComments() else closePlayer()
+                    if (locked) showUnlockBtn()
+                    else if (commentsPanel.visibility == View.VISIBLE) hideComments()
+                    else if (fullscreen) setFullscreen(false)
+                    else closePlayer()
                 } else if (tab == YT_TAB) {
                     if (!ytTab.handleBack()) selectTab(0)
                 } else {
@@ -1022,7 +1031,7 @@ class MainActivity : AppCompatActivity() {
     private fun afterDeleted(v: VideoItem) {
         all.remove(v); cache.remove(v.id); try { thumbFile(v).delete() } catch (_: Exception) {}
         try { File(File(filesDir, "comments"), "${v.id}.txt").delete() } catch (_: Exception) {}
-        expandedCommentIds.remove(v.id) // إزالة حالة التعليقات
+        expandedCommentIds.remove(v.id)
         prefs.clearVideo(v.id); refresh(); Toast.makeText(this@MainActivity, "تم حذف الفيديو", Toast.LENGTH_SHORT).show()
     }
 
@@ -1063,7 +1072,6 @@ class MainActivity : AppCompatActivity() {
         commentsContainer.visibility = View.GONE
         card.addView(commentsContainer)
 
-        // دالة داخلية لملء التعليقات
         fun populateComments(container: LinearLayout, id: Long) {
             container.removeAllViews()
             val comments = try {
@@ -1083,7 +1091,7 @@ class MainActivity : AppCompatActivity() {
                     val nl = cm.indexOf('\n')
                     val author = if (nl > 0) cm.substring(0, nl) else ""
                     val body = if (nl > 0) cm.substring(nl + 1) else cm
-                    
+
                     val a = TextView(this)
                     a.text = author
                     a.setTextColor(Color.parseColor("#AAAAAA"))
@@ -1091,18 +1099,17 @@ class MainActivity : AppCompatActivity() {
                     a.typeface = fontBold
                     a.setPadding(0, dp(8), 0, dp(2))
                     a.textDirection = View.TEXT_DIRECTION_FIRST_STRONG
-                    
+
                     val b = TextView(this)
                     b.text = body
                     b.setTextColor(Color.WHITE)
                     b.textSize = 14f
                     b.setPadding(0, 0, 0, dp(4))
                     b.textDirection = View.TEXT_DIRECTION_FIRST_STRONG
-                    
+
                     container.addView(a)
                     container.addView(b)
-                    
-                    // خط فاصل خفيف
+
                     val divider = View(this)
                     divider.setBackgroundColor(Color.parseColor("#1AFFFFFF"))
                     container.addView(divider, LinearLayout.LayoutParams(-1, dp(1)).apply { setMargins(0, dp(2), 0, dp(2)) })
@@ -1110,13 +1117,11 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // إذا كان هذا الفيديو مفتوحاً مسبقاً، قم بإظهار تعليقاته مباشرة
         if (expandedCommentIds.contains(v.id)) {
             populateComments(commentsContainer, v.id)
             commentsContainer.visibility = View.VISIBLE
         }
 
-        // زر النقاط الثلاث
         val dots = TextView(this)
         dots.text = "•••"
         dots.setTextColor(Color.WHITE)
@@ -1124,7 +1129,7 @@ class MainActivity : AppCompatActivity() {
         dots.gravity = Gravity.CENTER
         dots.isFocusable = false
         dots.contentDescription = "خيارات"
-        
+
         val dotsBg = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = dp(8).toFloat()
@@ -1136,7 +1141,7 @@ class MainActivity : AppCompatActivity() {
             val pm = PopupMenu(this, dots)
             val cCount = countComments(v.id)
             val isExpanded = expandedCommentIds.contains(v.id)
-            
+
             pm.menu.add(0, 1, 0, "إعادة المشاهدة من البداية")
             if (cCount > 0) {
                 pm.menu.add(0, 2, 1, if (isExpanded) "إخفاء التعليقات" else "عرض التعليقات ($cCount)")
@@ -1144,7 +1149,7 @@ class MainActivity : AppCompatActivity() {
                 pm.menu.add(0, 2, 1, "لا توجد تعليقات").isEnabled = false
             }
             pm.menu.add(0, 3, 2, "حذف الفيديو")
-            
+
             pm.setOnMenuItemClickListener { item ->
                 when (item.itemId) {
                     1 -> { prefs.resetProgress(v.id); refresh(); true }
@@ -1365,10 +1370,10 @@ class MainActivity : AppCompatActivity() {
 
         fsBtn = ImageView(this)
         fsBtn.scaleType = ImageView.ScaleType.FIT_CENTER
-        fsBtn.setImageDrawable(IconDrawable(IconDrawable.COMPRESS, Color.WHITE))
+        fsBtn.setImageDrawable(IconDrawable(IconDrawable.EXPAND, Color.WHITE))
         fsBtn.setPadding(dp(8), dp(8), dp(8), dp(8))
-        fsBtn.contentDescription = "الخروج من الفيديو"
-        fsBtn.setOnClickListener { closePlayer() }
+        fsBtn.contentDescription = "ملء الشاشة"
+        fsBtn.setOnClickListener { setFullscreen(!fullscreen) }
         seekRow.addView(fsBtn, LinearLayout.LayoutParams(dp(42), dp(42)))
 
         controls.addView(seekRow, LinearLayout.LayoutParams(-1, -2))
@@ -1417,7 +1422,6 @@ class MainActivity : AppCompatActivity() {
 
         btnRow.addView(makePlayerBtn(IconDrawable.LOCK) { setLocked(true) }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { setMargins(dp(5), 0, dp(5), 0) })
 
-        // زر التعليقات مع شارة العدد
         btnRow.addView(makeCommentButton(), LinearLayout.LayoutParams(dp(44), dp(44)).apply { setMargins(dp(5), 0, dp(5), 0) })
 
         if (Build.VERSION.SDK_INT >= 26 && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
@@ -1464,6 +1468,14 @@ class MainActivity : AppCompatActivity() {
         hudText.background = GradientDrawable().apply { setColor(Color.parseColor("#B0000000")); cornerRadius = dp(14).toFloat() }
         hudText.visibility = View.GONE; playerRoot.addView(hudText, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
         setPlayIcon(true)
+
+        // حتى لا يتداخل المشغّل مع شريط الحالة/التنقل خارج وضع ملء الشاشة
+        @Suppress("DEPRECATION")
+        playerRoot.setOnApplyWindowInsetsListener { v, ins ->
+            if (fullscreen) v.setPadding(0, 0, 0, 0)
+            else v.setPadding(0, ins.systemWindowInsetTop, 0, ins.systemWindowInsetBottom)
+            ins
+        }
     }
 
     private fun onPlayerTap() {
@@ -1605,10 +1617,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun openPlayer(v: VideoItem) {
         releasePlayer(); current = v; videoW = 0; videoH = 0; locked = false; speedIdx = 2; speedBtn.text = "1x"
-        aspectLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+        aspectLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
         hideComments()
         unlockBtn.visibility = View.GONE; hudText.visibility = View.GONE; playerTitle.text = v.title; setPlayIcon(true); seekBar.progress = 0
-        controls.visibility = View.VISIBLE; topBar.visibility = View.VISIBLE; playerRoot.visibility = View.VISIBLE; hideSystemBars(true)
+        controls.visibility = View.VISIBLE; topBar.visibility = View.VISIBLE; playerRoot.visibility = View.VISIBLE; setFullscreen(false)
 
         // شارة عدد التعليقات
         commentsCount = countComments(v.id)
@@ -1642,10 +1654,6 @@ class MainActivity : AppCompatActivity() {
             override fun onVideoSizeChanged(videoSize: VideoSize) {
                 videoW = videoSize.width
                 videoH = videoSize.height
-                if (videoW > videoH && !isLandscape) {
-                    isLandscape = true
-                    requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                }
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -1697,7 +1705,20 @@ class MainActivity : AppCompatActivity() {
         } else { View.SYSTEM_UI_FLAG_VISIBLE }
     }
 
+    private fun setFullscreen(on: Boolean) {
+        fullscreen = on
+        hideSystemBars(on)
+        isLandscape = on && videoW > videoH
+        requestedOrientation = if (isLandscape) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                               else ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        aspectLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+        fsBtn.setImageDrawable(IconDrawable(if (on) IconDrawable.COMPRESS else IconDrawable.EXPAND, Color.WHITE))
+        fsBtn.contentDescription = if (on) "إنهاء ملء الشاشة" else "ملء الشاشة"
+        playerRoot.requestApplyInsets()
+    }
+
     private fun closePlayer() {
+        setFullscreen(false)
         hideComments()
         val p = player; val c = current
         if (p != null && c != null && prepared) {
@@ -1794,7 +1815,7 @@ class YtDownloader : Downloader() {
 }
 
 /**
- * تبويب YouTube: يلصق المستخدم الرابط → ينزّل الفيديو + أول 50 تعليق.
+ * تبويب YouTube: تنزيل متوازي سريع، عدة فيديوهات، استئناف، وتمييز المنزَّل سابقاً.
  * الفيديو يُحفظ في المجلد المختار، والتعليقات في filesDir/comments/<mediaId>.txt
  */
 class YoutubeTab(
@@ -1808,12 +1829,14 @@ class YoutubeTab(
         private var inited = false
         private const val HOME = "https://m.youtube.com/"
         private const val UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0"
-        private const val CHUNK = 4L * 1024 * 1024
+        private const val CHUNK = 2L * 1024 * 1024
+        private const val THREADS = 4
         private const val BTN_TEXT = "⬇ تنزيل الفيديو + 50 تعليق"
     }
 
     private class Option(val label: String, val video: VideoStream, val audio: AudioStream?, val height: Int)
     private class Cancelled : Exception()
+    private class Job(val id: String) { @Volatile var cancelled = false }
 
     val view = FrameLayout(act)
     private val web = WebView(act)
@@ -1821,10 +1844,10 @@ class YoutubeTab(
     private val btnBg = GradientDrawable()
     private val status = TextView(act)
     private val bar = ProgressBar(act, null, android.R.attr.progressBarStyleHorizontal)
-    private val io = Executors.newSingleThreadExecutor()
+    private val jobs = ConcurrentHashMap<String, Job>()
+    private val dlPool = Executors.newFixedThreadPool(2)
     private val ui = Handler(Looper.getMainLooper())
-    @Volatile private var busy = false
-    @Volatile private var cancelled = false
+    private val dlPrefs = act.getSharedPreferences("yt_downloaded", Context.MODE_PRIVATE)
     private var loadedOnce = false
     private var currentVideoUrl: String? = null
     private var customView: View? = null
@@ -1881,11 +1904,17 @@ class YoutubeTab(
         btn.elevation = dp(8).toFloat()
         btn.visibility = View.GONE
         btn.setOnClickListener { onButton() }
+        // ضغطة طويلة = إيقاف مؤقت لكل التنزيلات (الأجزاء المكتملة تبقى للاستئناف)
+        btn.setOnLongClickListener {
+            jobs.values.forEach { it.cancelled = true }
+            setStatus("تم الإيقاف — اضغط تنزيل مجدداً للاستئناف", true); true
+        }
         view.addView(btn, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(16) })
     }
 
     fun onShown() {
         if (!loadedOnce) { loadedOnce = true; web.loadUrl(HOME) } else web.onResume()
+        refreshBtn()
     }
 
     fun onHidden() {
@@ -1901,10 +1930,10 @@ class YoutubeTab(
     }
 
     fun destroy() {
-        cancelled = true
+        jobs.values.forEach { it.cancelled = true }
+        dlPool.shutdown()
         hideCustom()
         try { web.destroy() } catch (_: Exception) {}
-        io.shutdown()
     }
 
     @Suppress("DEPRECATION")
@@ -1934,10 +1963,46 @@ class YoutubeTab(
         return id?.let { "https://www.youtube.com/watch?v=$it" }
     }
 
-    private fun updateButton(url: String?) {
-        currentVideoUrl = videoUrlOf(url)
-        btn.visibility = if (busy || currentVideoUrl != null) View.VISIBLE else View.GONE
+    private fun vidOf(url: String?): String? =
+        url?.let { Regex("v=([\\w-]{11})").find(it)?.groupValues?.get(1) }
+
+    /** يرجع الفيديو إن كان منزَّلاً وملفه ما زال موجوداً، وإلا يمسح السجل */
+    private fun downloadedItem(vid: String): VideoItem? {
+        val id = dlPrefs.getLong(vid, -1L)
+        if (id < 0) return null
+        val uri = Uri.withAppendedPath(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id.toString())
+        var item: VideoItem? = null
+        try {
+            act.contentResolver.query(
+                uri,
+                arrayOf(MediaStore.Video.Media.DISPLAY_NAME, MediaStore.Video.Media.DURATION),
+                null, null, null
+            )?.use { c ->
+                if (c.moveToFirst()) item = VideoItem(id, (c.getString(0) ?: "video").substringBeforeLast('.'), c.getLong(1), uri)
+            }
+        } catch (_: Exception) {}
+        if (item == null) dlPrefs.edit().remove(vid).apply()
+        return item
     }
+
+    private fun updateButton(url: String?) { currentVideoUrl = videoUrlOf(url); refreshBtn() }
+
+    private fun refreshBtn() = ui.post {
+        val n = jobs.size
+        val vid = vidOf(currentVideoUrl)
+        val done = if (vid != null && !jobs.containsKey(vid)) downloadedItem(vid) else null
+        btn.text = when {
+            done != null -> "✓ تم التنزيل — اضغط للخيارات"
+            n > 0 -> "$BTN_TEXT  ($n ⏳)"
+            else -> BTN_TEXT
+        }
+        btnBg.setColor(Color.parseColor(if (done != null) "#2E7D32" else "#FF0000"))
+        btn.visibility = if (currentVideoUrl != null || n > 0) View.VISIBLE else View.GONE
+        bar.visibility = if (n > 0) View.VISIBLE else View.GONE
+        view.keepScreenOn = n > 0
+    }
+
+    private fun endJob(job: Job) { jobs.remove(job.id); refreshBtn() }
 
     private fun setStatus(s: String, autoHide: Boolean = false) {
         ui.post {
@@ -1947,34 +2012,39 @@ class YoutubeTab(
         }
     }
 
-    private fun setBusyUi(on: Boolean) {
-        busy = on
-        btn.text = if (on) "✕ إلغاء التنزيل" else BTN_TEXT
-        btnBg.setColor(Color.parseColor(if (on) "#555555" else "#FF0000"))
-        btn.visibility = if (on || currentVideoUrl != null) View.VISIBLE else View.GONE
-        bar.visibility = if (on) View.VISIBLE else View.GONE
-        if (on) bar.progress = 0
-        view.keepScreenOn = on
-    }
-
-    private fun finishUi() { ui.post { setBusyUi(false) } }
-
     private fun fail(e: Throwable) {
-        if (e is Cancelled) setStatus("تم إلغاء التنزيل", true)
+        if (e is Cancelled) setStatus("تم الإيقاف — يمكنك الاستئناف بالضغط على تنزيل", true)
         else setStatus("✗ فشل: ${e.message ?: e.javaClass.simpleName}")
     }
 
     private fun onButton() {
-        if (busy) { cancelled = true; setStatus("جارٍ الإلغاء..."); return }
         val url = currentVideoUrl
         if (url == null) { Toast.makeText(act, "افتح فيديو أولاً", Toast.LENGTH_SHORT).show(); return }
         if (folder().isEmpty()) {
             Toast.makeText(act, "اختر مجلد الفيديوهات أولاً (زر المجلد)", Toast.LENGTH_LONG).show(); return
         }
-        cancelled = false
-        setBusyUi(true)
-        web.evaluateJavascript("document.querySelectorAll('video').forEach(function(v){v.pause()})", null)
-        io.execute {
+        val vid = vidOf(url) ?: return
+        if (jobs.containsKey(vid)) { Toast.makeText(act, "هذا الفيديو قيد التنزيل بالفعل", Toast.LENGTH_SHORT).show(); return }
+
+        val done = downloadedItem(vid)
+        if (done != null) {
+            AlertDialog.Builder(act)
+                .setTitle("تم تنزيله سابقاً")
+                .setMessage("«${done.title.take(40)}» موجود في مكتبتك.")
+                .setPositiveButton("تشغيل") { _, _ -> onOpen(done) }
+                .setNegativeButton("إعادة التنزيل") { _, _ -> startDownload(url, vid) }
+                .setNeutralButton("إلغاء", null)
+                .show()
+            return
+        }
+        startDownload(url, vid)
+    }
+
+    private fun startDownload(url: String, vid: String) {
+        if (jobs.isEmpty()) ui.post { bar.progress = 0 }
+        val job = Job(vid); jobs[vid] = job; refreshBtn()
+        Toast.makeText(act, "أُضيف إلى التنزيلات", Toast.LENGTH_SHORT).show()
+        dlPool.execute {
             var handedOff = false
             try {
                 setStatus("جارٍ جلب معلومات الفيديو...")
@@ -1982,13 +2052,10 @@ class YoutubeTab(
                 val options = buildOptions(info)
                 if (options.isEmpty()) throw IllegalStateException("لا توجد صيغة قابلة للتنزيل لهذا الفيديو")
                 handedOff = true
-                if (options.size == 1) runDownload(info, url, options[0])
-                else ui.post { askQuality(info, url, options) }
-            } catch (e: Exception) {
-                fail(e)
-            } finally {
-                if (!handedOff) finishUi()
-            }
+                if (options.size == 1) runDownload(job, info, url, options[0])
+                else ui.post { askQuality(job, info, url, options) }
+            } catch (e: Exception) { fail(e) }
+            finally { if (!handedOff) endJob(job) }
         }
     }
 
@@ -2012,56 +2079,58 @@ class YoutubeTab(
         return map.values.sortedByDescending { it.height }
     }
 
-    private fun askQuality(info: StreamInfo, url: String, options: List<Option>) {
+    private fun askQuality(job: Job, info: StreamInfo, url: String, options: List<Option>) {
         val labels = options.map { it.label }.toTypedArray()
         AlertDialog.Builder(act)
             .setTitle("اختر الجودة")
-            .setItems(labels) { _, i -> io.execute { runDownload(info, url, options[i]) } }
-            .setOnCancelListener { fail(Cancelled()); finishUi() }
+            .setItems(labels) { _, i -> dlPool.execute { runDownload(job, info, url, options[i]) } }
+            .setOnCancelListener { endJob(job) }
             .show()
     }
 
-    private fun runDownload(info: StreamInfo, url: String, opt: Option) {
+    private fun runDownload(job: Job, info: StreamInfo, url: String, opt: Option) {
         val title = info.name.replace(Regex("[\\\\/:*?\"<>|]"), "_").take(100)
-        val tmpDir = File(act.cacheDir, "yt_dl").apply { mkdirs() }
-        val vTmp = File(tmpDir, "v.tmp"); val aTmp = File(tmpDir, "a.tmp"); val outTmp = File(tmpDir, "out.mp4")
+        val tmpDir = File(act.filesDir, "yt_dl").apply { mkdirs() }
+        val key = "${job.id}_${opt.height}"
+        val vTmp = File(tmpDir, "${key}_v.part")
+        val aTmp = File(tmpDir, "${key}_a.part")
+        val outTmp = File(tmpDir, "${key}_out.mp4")
+        val tag = title.take(18)
+        var success = false
         try {
             val finalFile: File
-            if (opt.audio == null) {
-                fetch(opt.video.content, vTmp, "تنزيل الفيديو (" + opt.label + ")", 0, 80)
+            val audioStream = opt.audio
+            if (audioStream == null) {
+                fetch(opt.video.content, vTmp, tag, 0, 80, job)
                 finalFile = vTmp
             } else {
-                fetch(opt.video.content, vTmp, "تنزيل الصورة (" + opt.label + ")", 0, 70)
-                fetch(opt.audio.content, aTmp, "تنزيل الصوت", 70, 80)
+                fetch(opt.video.content, vTmp, tag, 0, 70, job)
+                fetch(audioStream.content, aTmp, "$tag (صوت)", 70, 80, job)
                 setStatus("جارٍ دمج الصوت والصورة...")
-                mux(vTmp, aTmp, outTmp)
+                mux(vTmp, aTmp, outTmp, job)
                 finalFile = outTmp
             }
             ui.post { bar.progress = 85 }
             setStatus("جارٍ حفظ الفيديو في الهاتف...")
             val saved = saveToStore(title, finalFile)
+            success = true
+            dlPrefs.edit().putLong(job.id, saved.first).apply()
 
-            // --- جلب وتنزيل التعليقات ---
             setStatus("جارٍ جلب التعليقات (50)...")
             ui.post { bar.progress = 90 }
-            
             var commentsCount = 0
             val savedCommentsOk = try {
-                val comments = fetchComments(url) // جلب 50 تعليق
+                val comments = fetchComments(url)
                 commentsCount = comments.size
-                saveComments(saved.first, title, comments) // حفظها في الهاتف
-            } catch (e: Exception) {
-                false
-            }
+                saveComments(saved.first, title, comments)
+            } catch (e: Exception) { false }
 
             val item = VideoItem(saved.first, title, info.duration * 1000L, saved.second)
-            
             ui.post {
                 bar.progress = 100
                 status.text = if (savedCommentsOk && commentsCount > 0)
-                    "✓ تم تنزيل الفيديو و $commentsCount تعليق — اضغط للتشغيل ▶"
-                else
-                    "✓ تم تنزيل الفيديو — اضغط للتشغيل ▶ (تعذّر جلب التعليقات)"
+                    "✓ تم تنزيل «$tag» و $commentsCount تعليق — اضغط للتشغيل ▶"
+                else "✓ تم تنزيل «$tag» — اضغط للتشغيل ▶ (تعذّر جلب التعليقات)"
                 status.visibility = View.VISIBLE
                 status.setOnClickListener {
                     status.visibility = View.GONE; status.setOnClickListener(null); status.isClickable = false
@@ -2072,8 +2141,8 @@ class YoutubeTab(
         } catch (e: Exception) {
             fail(e)
         } finally {
-            vTmp.delete(); aTmp.delete(); outTmp.delete()
-            finishUi()
+            if (success) listOf(vTmp, aTmp, outTmp).forEach { it.delete(); File(it.path + ".meta").delete() }
+            endJob(job)
         }
     }
 
@@ -2085,52 +2154,92 @@ class YoutubeTab(
         setStatus(String.format(Locale.US, "%s %d%% — %.1f / %.1f MB", label, (frac * 100).toInt(), pos / mb, maxOf(total, 0L) / mb))
     }
 
-    private fun fetch(link: String, dest: File, label: String, from: Int, to: Int) {
-        var pos = 0L
-        var total = -1L
-        var lastUi = 0L
-        FileOutputStream(dest).use { out ->
-            val buf = ByteArray(64 * 1024)
-            while (total < 0 || pos < total) {
-                var attempt = 0
-                while (true) {
-                    if (cancelled) throw Cancelled()
-                    val before = pos
-                    try {
-                        val conn = URL(link).openConnection() as HttpURLConnection
-                        conn.setRequestProperty("User-Agent", UA)
-                        conn.setRequestProperty("Range", "bytes=$pos-${pos + CHUNK - 1}")
-                        conn.connectTimeout = 20000; conn.readTimeout = 20000
-                        val code = conn.responseCode
-                        if (code != 206 && !(code == 200 && pos == 0L)) throw IOException("HTTP $code")
-                        val whole = code == 200
-                        total = if (whole) conn.contentLengthLong
-                        else conn.getHeaderField("Content-Range")?.substringAfter('/')?.trim()?.toLongOrNull()
-                            ?: throw IOException("Content-Range")
-                        conn.inputStream.use { inp ->
-                            while (true) {
-                                if (cancelled) throw Cancelled()
-                                val n = inp.read(buf)
-                                if (n < 0) break
-                                out.write(buf, 0, n); pos += n
-                                val now = System.currentTimeMillis()
-                                if (now - lastUi > 400) { lastUi = now; report(label, pos, total, from, to) }
+    /** تنزيل متوازي بأجزاء مع تسجيل الأجزاء المكتملة في ملف .meta للاستئناف */
+    private fun fetch(link: String, dest: File, label: String, from: Int, to: Int, job: Job) {
+        // 1) حجم الملف
+        val c0 = URL(link).openConnection() as HttpURLConnection
+        val total: Long
+        try {
+            c0.setRequestProperty("User-Agent", UA); c0.setRequestProperty("Range", "bytes=0-0")
+            c0.connectTimeout = 20000; c0.readTimeout = 20000
+            total = c0.getHeaderField("Content-Range")?.substringAfter('/')?.trim()?.toLongOrNull()
+                ?: throw IOException("تعذّر معرفة حجم الملف")
+        } finally { c0.disconnect() }
+
+        // 2) الأجزاء المكتملة سابقاً (استئناف)
+        val meta = File(dest.path + ".meta")
+        val n = ((total + CHUNK - 1) / CHUNK).toInt()
+        fun chunkLen(i: Int): Long = minOf(CHUNK, total - i * CHUNK)
+        val done = java.util.Collections.synchronizedSet(HashSet<Int>())
+        val resumable = dest.exists() && dest.length() == total && meta.exists() &&
+                meta.readLines().firstOrNull()?.toLongOrNull() == total
+        if (resumable) {
+            meta.readLines().getOrNull(1)?.split(",")?.mapNotNullTo(done) { it.toIntOrNull() }
+        } else {
+            RandomAccessFile(dest, "rw").use { it.setLength(total) }
+            meta.delete()
+        }
+        var initial = 0L
+        for (i in done.toList()) initial += chunkLen(i)
+        val bytes = AtomicLong(initial)
+        val next = AtomicInteger(0)
+        val error = AtomicReference<Throwable?>(null)
+
+        // 3) عمّال التحميل المتوازي
+        val workers = (1..THREADS).map {
+            Thread {
+                try {
+                    RandomAccessFile(dest, "rw").use { raf ->
+                        val buf = ByteArray(64 * 1024)
+                        while (!job.cancelled && error.get() == null) {
+                            val i = next.getAndIncrement(); if (i >= n) break
+                            if (done.contains(i)) continue
+                            val s = i * CHUNK; val len = chunkLen(i)
+                            var off = 0L; var attempt = 0
+                            while (off < len) {
+                                try {
+                                    val conn = URL(link).openConnection() as HttpURLConnection
+                                    conn.setRequestProperty("User-Agent", UA)
+                                    conn.setRequestProperty("Range", "bytes=${s + off}-${s + len - 1}")
+                                    conn.connectTimeout = 20000; conn.readTimeout = 20000
+                                    if (conn.responseCode != 206) throw IOException("HTTP ${conn.responseCode}")
+                                    conn.inputStream.use { inp ->
+                                        while (true) {
+                                            if (job.cancelled) throw Cancelled()
+                                            val r = inp.read(buf); if (r < 0) break
+                                            raf.seek(s + off); raf.write(buf, 0, r)
+                                            off += r; bytes.addAndGet(r.toLong())
+                                        }
+                                    }
+                                    if (off < len) throw IOException("short")
+                                } catch (e: IOException) {
+                                    if (++attempt > 4) throw e
+                                    Thread.sleep(800)
+                                }
+                            }
+                            synchronized(done) {
+                                done.add(i)
+                                meta.writeText("$total\n" + done.joinToString(","))
                             }
                         }
-                        if (whole) total = pos
-                        if (pos == before) throw IOException("empty")
-                        break
-                    } catch (e: IOException) {
-                        if (++attempt > 3) throw e
-                        Thread.sleep(800)
                     }
-                }
-            }
+                } catch (e: Cancelled) {
+                } catch (e: Throwable) { error.compareAndSet(null, e) }
+            }.also { it.start() }
         }
-        report(label, pos, total, from, to)
+
+        // 4) متابعة التقدم
+        while (workers.any { it.isAlive }) {
+            report(label, bytes.get(), total, from, to)
+            try { Thread.sleep(400) } catch (_: InterruptedException) { job.cancelled = true }
+        }
+        workers.forEach { it.join() }
+        if (job.cancelled) throw Cancelled()
+        error.get()?.let { throw it }
+        report(label, total, total, from, to)
     }
 
-    private fun mux(videoF: File, audioF: File, out: File) {
+    private fun mux(videoF: File, audioF: File, out: File, job: Job) {
         val vEx = MediaExtractor(); val aEx = MediaExtractor()
         var muxer: MediaMuxer? = null
         try {
@@ -2150,7 +2259,7 @@ class YoutubeTab(
             val buf = java.nio.ByteBuffer.allocate(4 * 1024 * 1024)
             val bi = MediaCodec.BufferInfo()
             while (true) {
-                if (cancelled) throw Cancelled()
+                if (job.cancelled) throw Cancelled()
                 val vTime = vEx.sampleTime; val aTime = aEx.sampleTime
                 if (vTime < 0 && aTime < 0) break
                 val useV = aTime < 0 || (vTime in 0..aTime)
@@ -2220,7 +2329,7 @@ class YoutubeTab(
     // ---------------- التعليقات ----------------
     private fun fetchComments(url: String): List<String> {
         val out = ArrayList<String>()
-        
+
         fun add(items: List<CommentsInfoItem>) {
             for (c in items) {
                 if (out.size >= MAX_COMMENTS) return
@@ -2232,11 +2341,9 @@ class YoutubeTab(
         }
 
         try {
-            // جلب الصفحة الأولى من التعليقات
             val ci = CommentsInfo.getInfo(url)
             add(ci.relatedItems)
-            
-            // جلب المزيد من الصفحات حتى نصل إلى 50 تعليق
+
             var page = ci.nextPage
             while (out.size < MAX_COMMENTS && page != null) {
                 val more = CommentsInfo.getMoreItems(ServiceList.YouTube, url, page)
@@ -2244,9 +2351,9 @@ class YoutubeTab(
                 page = more.nextPage
             }
         } catch (e: Exception) {
-            e.printStackTrace() // لطباعة الخطأ في اللوج إن حدث
+            e.printStackTrace()
         }
-        
+
         return out
     }
 
