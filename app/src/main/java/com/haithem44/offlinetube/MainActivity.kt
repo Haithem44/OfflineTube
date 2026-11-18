@@ -557,1002 +557,1053 @@ class MainActivity : AppCompatActivity() {
             if (p != null && prepared) saveProgress(p, c)
         }
     }
+    
+    private fun addSplash() {
+        val splash = LinearLayout(this)
+        splash.orientation = LinearLayout.VERTICAL
+        splash.gravity = Gravity.CENTER
+        splash.setBackgroundColor(bg)
+        splash.isClickable = true
+
+        val sIcon = TextView(this)
+        sIcon.text = "▶"; sIcon.setTextColor(Color.WHITE); sIcon.textSize = 30f; sIcon.gravity = Gravity.CENTER
+        sIcon.background = GradientDrawable().apply { setColor(red); cornerRadius = dp(16).toFloat() }
+        sIcon.setPadding(dp(22), dp(10), dp(22), dp(10))
+        splash.addView(sIcon, LinearLayout.LayoutParams(-2, -2))
+
+        val sName = TextView(this)
+        sName.text = appName; sName.setTextColor(Color.WHITE); sName.textSize = 28f; sName.typeface = Typeface.DEFAULT_BOLD; sName.gravity = Gravity.CENTER
+        splash.addView(sName, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(14) })
+
+        rootFrame.addView(splash, FrameLayout.LayoutParams(-1, -1))
+
+        sIcon.scaleX = 0.7f; sIcon.scaleY = 0.7f
+        sIcon.animate().scaleX(1f).scaleY(1f).setDuration(500).setInterpolator(DecelerateInterpolator()).start()
+        ui.postDelayed({ splash.animate().alpha(0f).setDuration(350).withEndAction { rootFrame.removeView(splash) }.start() }, 900)
+    }
+
+    private fun raised(top: Int, bottom: Int, radius: Int, pressed: Boolean = false): Drawable {
+        val r = dp(radius).toFloat()
+        val shadow = GradientDrawable().apply { setColor(Color.parseColor("#66000000")); cornerRadius = r }
+        val edge = GradientDrawable().apply { setColor(Color.parseColor("#33FFFFFF")); cornerRadius = r }
+        val face = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, if (pressed) intArrayOf(bottom, top) else intArrayOf(top, bottom)).apply { cornerRadius = r }
+        val layers = LayerDrawable(arrayOf<Drawable>(shadow, edge, face))
+        layers.setLayerInset(0, 0, dp(4), 0, 0); layers.setLayerInset(1, 0, 0, 0, dp(3))
+        layers.setLayerInset(2, dp(1), dp(1), dp(1), if (pressed) dp(3) else dp(4))
+        return layers
+    }
+
+    private fun setBgKeepPad(v: View, d: Drawable) {
+        val l = v.paddingLeft; val t = v.paddingTop
+        val r = v.paddingRight; val b = v.paddingBottom
+        v.background = d; v.setPadding(l, t, r, b)
+    }
+
+    private fun make3D(v: View, top: Int = Color.parseColor("#3A3A3A"), bottom: Int = Color.parseColor("#1C1C1C"), radius: Int = 14) {
+        val normal = raised(top, bottom, radius)
+        val down = raised(top, bottom, radius, true)
+        setBgKeepPad(v, normal); v.elevation = dp(6).toFloat()
+        v.setOnTouchListener { view, e ->
+            when (e.action) {
+                MotionEvent.ACTION_DOWN -> { setBgKeepPad(view, down); view.animate().scaleX(0.96f).scaleY(0.96f).setDuration(80).start(); buzz(view) }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                setBgKeepPad(view, normal); view.animate().scaleX(1f).scaleY(1f).setDuration(100).start()
-            }
-        }
-        false
-    }
-}
-
-private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
-
-private fun fmt(ms: Long): String {
-    val s = ms / 1000; val h = s / 3600; val m = (s % 3600) / 60; val sec = s % 60
-    return if (h > 0) String.format(Locale.US, "%d:%02d:%02d", h, m, sec) else String.format(Locale.US, "%02d:%02d", m, sec)
-}
-
-private fun humanSize(b: Long): String {
-    return when {
-        b >= 1_073_741_824 -> String.format(Locale.US, "%.1f GB", b / 1_073_741_824.0)
-        b >= 1_048_576 -> String.format(Locale.US, "%.0f MB", b / 1_048_576.0)
-        b >= 1024 -> String.format(Locale.US, "%.0f KB", b / 1024.0)
-        else -> "$b B"
-    }
-}
-
-private fun buildTopBlock(): View {
-    val top = LinearLayout(this)
-    top.orientation = LinearLayout.VERTICAL
-    top.setBackgroundColor(bg)
-    top.setPadding(dp(14), dp(14), dp(14), dp(6))
-
-    logo = LinearLayout(this)
-    logo.orientation = LinearLayout.HORIZONTAL
-    logo.gravity = Gravity.CENTER_VERTICAL
-
-    val iconBox = TextView(this)
-    iconBox.text = "▶"; iconBox.setTextColor(Color.WHITE); iconBox.textSize = 15f
-    iconBox.gravity = Gravity.CENTER
-    iconBox.background = GradientDrawable().apply { setColor(red); cornerRadius = dp(10).toFloat() }
-    val ibLp = LinearLayout.LayoutParams(dp(34), dp(34))
-    logo.addView(iconBox, ibLp)
-
-    val title = TextView(this)
-    title.text = appName; title.setTextColor(Color.WHITE); title.textSize = 19f; title.typeface = fontBold
-    title.setPadding(dp(10), 0, 0, 0)
-    logo.addView(title)
-
-    val spacer = View(this)
-    logo.addView(spacer, LinearLayout.LayoutParams(0, 1, 1f))
-
-    val refreshBtn = ImageButton(this)
-    refreshBtn.setImageDrawable(IconDrawable(IconDrawable.REFRESH, navInactive))
-    refreshBtn.background = null
-    refreshBtn.setOnClickListener { buzz(it); reloadVideos() }
-    logo.addView(refreshBtn, LinearLayout.LayoutParams(dp(40), dp(40)))
-
-    val folderBtn = ImageButton(this)
-    folderBtn.setImageDrawable(IconDrawable(IconDrawable.FOLDER, navInactive))
-    folderBtn.background = null
-    folderBtn.setOnClickListener { buzz(it); pickFolderLauncher.launch(null) }
-    logo.addView(folderBtn, LinearLayout.LayoutParams(dp(40), dp(40)))
-
-    top.addView(logo)
-
-    searchBox = EditText(this)
-    searchBox.hint = "ابحث عن فيديو..."
-    searchBox.setTextColor(Color.WHITE); searchBox.setHintTextColor(Color.parseColor("#777777"))
-    searchBox.textSize = 15f; searchBox.isSingleLine = true
-    searchBox.setBackground(GradientDrawable().apply {
-        setColor(Color.parseColor("#1F1F1F")); cornerRadius = dp(22).toFloat()
-        setStroke(dp(1), Color.parseColor("#333333"))
-    })
-    searchBox.setPadding(dp(18), dp(10), dp(18), dp(10))
-    searchBox.setText(query)
-    searchBox.addTextChangedListener(object : TextWatcher {
-        override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-        override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-        override fun afterTextChanged(s: Editable?) {
-            query = s?.toString() ?: ""
-            applyFilter()
-        }
-    })
-    top.addView(searchBox, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
-    return top
-}
-
-private fun buildTabs(): View {
-    val scroll = HorizontalScrollView(this)
-    scroll.isHorizontalScrollBarEnabled = false
-    scroll.setBackgroundColor(bg)
-    val row = LinearLayout(this)
-    row.orientation = LinearLayout.HORIZONTAL
-    row.setPadding(dp(10), dp(6), dp(10), dp(6))
-    row.layoutDirection = View.LAYOUT_DIRECTION_RTL
-
-    for ((i, name) in tabNames.withIndex()) {
-        val col = LinearLayout(this)
-        col.orientation = LinearLayout.VERTICAL
-        col.gravity = Gravity.CENTER
-
-        val tv = TextView(this)
-        tv.text = name; tv.textSize = 14f; tv.setPadding(dp(14), dp(8), dp(14), dp(6))
-        tv.setTextColor(if (i == tab) Color.WHITE else gray)
-        tv.typeface = if (i == tab) fontBold else fontRegular
-
-        val line = View(this)
-        line.setBackgroundColor(red)
-        val lp = LinearLayout.LayoutParams(-1, dp(3))
-        lp.marginStart = dp(10); lp.marginEnd = dp(10)
-        line.layoutParams = lp
-        line.visibility = if (i == tab) View.VISIBLE else View.INVISIBLE
-
-        col.addView(tv); col.addView(line)
-        tv.setOnClickListener { buzz(it); selectTab(i) }
-        tabTexts.add(tv); tabLines.add(line)
-        row.addView(col, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(2) })
-    }
-    scroll.addView(row)
-    return scroll
-}
-
-private fun selectTab(idx: Int) {
-    if (tab == idx && idx != YT_TAB) return
-    val old = tab
-    tab = idx; prefs.lastTab = idx
-    for (i in tabTexts.indices) {
-        tabTexts[i].setTextColor(if (i == idx) Color.WHITE else gray)
-        tabTexts[i].typeface = if (i == idx) fontBold else fontRegular
-        tabLines[i].visibility = if (i == idx) View.VISIBLE else View.INVISIBLE
-    }
-    ytPanel.visibility = if (idx == YT_TAB) View.VISIBLE else View.GONE
-    if (idx == YT_TAB) {
-        ytTab.onShown()
-    } else if (old == YT_TAB) {
-        ytTab.onHidden()
-    }
-    applyFilter()
-}
-
-private fun buildBottomNav(): View {
-    val nav = LinearLayout(this)
-    nav.orientation = LinearLayout.HORIZONTAL
-    nav.setBackgroundColor(Color.parseColor("#151515"))
-    nav.gravity = Gravity.CENTER
-    nav.layoutDirection = View.LAYOUT_DIRECTION_RTL
-
-    val items = arrayOf(
-        "الرئيسية" to IconDrawable.HOME,
-        "بحث" to IconDrawable.SEARCH,
-        "المجلد" to IconDrawable.FOLDER,
-        "YouTube" to IconDrawable.PLAY
-    )
-    for ((i, item) in items.withIndex()) {
-        val col = LinearLayout(this)
-        col.orientation = LinearLayout.VERTICAL
-        col.gravity = Gravity.CENTER
-        col.setPadding(0, dp(8), 0, dp(6))
-
-        val icon = IconDrawable(item.second, if (i == 0) navActive else navInactive)
-        val iv = ImageView(this)
-        iv.setImageDrawable(icon)
-        col.addView(iv, LinearLayout.LayoutParams(dp(24), dp(24)))
-
-        val tv = TextView(this)
-        tv.text = item.first; tv.textSize = 11f
-        tv.setTextColor(if (i == 0) navActive else navInactive)
-        col.addView(tv)
-
-        col.setOnClickListener { buzz(it); handleNav(i) }
-        navRefs.add(NavRef(i, icon, tv))
-        nav.addView(col, LinearLayout.LayoutParams(0, -1, 1f))
-    }
-    return nav
-}
-
-private fun handleNav(i: Int) {
-    when (i) {
-        0 -> selectTab(0)
-        1 -> { searchBox.requestFocus(); val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager; imm.showSoftInput(searchBox, InputMethodManager.SHOW_IMPLICIT) }
-        2 -> pickFolderLauncher.launch(null)
-        3 -> selectTab(YT_TAB)
-    }
-    for (ref in navRefs) {
-        val active = ref.tabIdx == i
-        ref.icon.setIconColor(if (active) navActive else navInactive)
-        ref.label.setTextColor(if (active) navActive else navInactive)
-    }
-}
-
-private fun updateNavForTab() {
-    val activeIdx = if (tab == YT_TAB) 3 else if (tab == 0) 0 else -1
-    for (ref in navRefs) {
-        val active = ref.tabIdx == activeIdx
-        ref.icon.setIconColor(if (active) navActive else navInactive)
-        ref.label.setTextColor(if (active) navActive else navInactive)
-    }
-}
-
-private fun applyFilter() {
-    if (tab == YT_TAB) return
-    shown.clear()
-    val q = query.trim().lowercase(Locale.getDefault())
-    val base = if (q.isEmpty()) all else all.filter { it.title.lowercase(Locale.getDefault()).contains(q) }
-    when (tab) {
-        0 -> shown.addAll(base)
-        1 -> shown.addAll(base.filter { prefs.getPosition(it.id) in 1 until it.duration })
-        2 -> shown.addAll(base.sortedByDescending { it.duration })
-        3 -> shown.addAll(base.filter { prefs.isWatched(it.id) })
-        4 -> shown.addAll(base.filter { it.duration in 1..60_000 })
-    }
-    updateContinueHeader()
-    adapter.notifyDataSetChanged()
-    emptyText.text = if (shown.isEmpty()) {
-        if (tab == 1) "لا توجد فيديوهات قيد المشاهدة" else "لا توجد فيديوهات"
-    } else ""
-    updateNavForTab()
-}
-
-private fun updateContinueHeader() {
-    continueHeader.removeAllViews()
-    if (tab != 1 || shown.isEmpty()) { continueHeader.visibility = View.GONE; return }
-    continueHeader.visibility = View.VISIBLE
-    val title = TextView(this)
-    title.text = "تابع من حيث توقفت"; title.setTextColor(Color.WHITE); title.textSize = 16f; title.typeface = fontBold
-    title.setPadding(dp(16), dp(12), dp(16), dp(8))
-    continueHeader.addView(title)
-}
-
-private fun reloadVideos() {
-    if (refreshing) return
-    refreshing = true
-    refreshBar.visibility = View.VISIBLE
-    loadVideos()
-}
-
-private fun afterDeleted(v: VideoItem) {
-    all.removeAll { it.id == v.id }
-    prefs.removePosition(v.id)
-    applyFilter()
-}
-
-private fun checkPermissionAndLoad() {
-    if (Build.VERSION.SDK_INT >= 33) {
-        val perm = if (Build.VERSION.SDK_INT >= 34) Manifest.permission.READ_MEDIA_VIDEO else Manifest.permission.READ_EXTERNAL_STORAGE
-        if (checkSelfPermission(perm) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(arrayOf(perm), 100)
-            return
-        }
-    } else if (Build.VERSION.SDK_INT >= 23 && Build.VERSION.SDK_INT < 33) {
-        if (checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE), 100)
-            return
-        }
-    }
-    loadVideos()
-}
-
-override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-    super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-    if (requestCode == 100) loadVideos()
-}
-
-private fun loadVideos() {
-    pool.execute {
-        val result = ArrayList<VideoItem>()
-        try {
-            val collection = if (Build.VERSION.SDK_INT >= 29) {
-                MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
-            } else {
-                MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-            }
-            val proj = arrayOf(MediaStore.Video.Media._ID, MediaStore.Video.Media.TITLE, MediaStore.Video.Media.DURATION)
-            val sel: String? = null
-            val selArgs: Array<String>? = null
-            val sort = MediaStore.Video.Media.DATE_ADDED + " DESC"
-
-            contentResolver.query(collection, proj, sel, selArgs, sort)?.use { c ->
-                val idIdx = c.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
-                val tIdx = c.getColumnIndexOrThrow(MediaStore.Video.Media.TITLE)
-                val dIdx = c.getColumnIndexOrThrow(MediaStore.Video.Media.DURATION)
-                while (c.moveToNext()) {
-                    val id = c.getLong(idIdx)
-                    val title = c.getString(tIdx) ?: "فيديو"
-                    val dur = c.getLong(dIdx)
-                    val uri = ContentUris.withAppendedId(collection, id)
-                    result.add(VideoItem(id, title, dur, uri))
+                    setBgKeepPad(view, normal); view.animate().scaleX(1f).scaleY(1f).setDuration(100).start()
                 }
             }
-        } catch (_: Exception) {}
-        ui.post {
-            all.clear(); all.addAll(result)
-            applyFilter()
-            if (refreshing) {
-                refreshing = false
-                refreshBar.visibility = View.GONE
-            }
-            restorePendingPlayer()
+            false
         }
     }
-}
 
-private fun restorePendingPlayer() {
-    if (pendingOpenId != -1L) {
-        val v = all.find { it.id == pendingOpenId }
-        pendingOpenId = -1L
-        if (v != null) openPlayer(v)
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    private fun fmt(ms: Long): String {
+        val s = ms / 1000; val h = s / 3600; val m = (s % 3600) / 60; val sec = s % 60
+        return if (h > 0) String.format(Locale.US, "%d:%02d:%02d", h, m, sec) else String.format(Locale.US, "%02d:%02d", m, sec)
     }
-    updateNavForTab()
-}
-private fun buildPlayer() {
-    playerRoot = FrameLayout(this)
-    playerRoot.setBackgroundColor(Color.BLACK)
 
-    aspectLayout = AspectRatioFrameLayout(this)
-    aspectLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-    surfaceView = SurfaceView(this)
-    surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
-        override fun surfaceCreated(holder: SurfaceHolder) {}
-        override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {}
-        override fun surfaceDestroyed(holder: SurfaceHolder) {}
-    })
-    aspectLayout.addView(surfaceView, FrameLayout.LayoutParams(-1, -1))
-    playerRoot.addView(aspectLayout, FrameLayout.LayoutParams(-1, -1))
-
-    gestureOverlay = View(this)
-    playerRoot.addView(gestureOverlay, FrameLayout.LayoutParams(-1, -1))
-
-    hudText = TextView(this)
-    hudText.setTextColor(Color.WHITE); hudText.textSize = 16f; hudText.typeface = fontBold
-    hudText.setBackground(GradientDrawable().apply { setColor(Color.parseColor("#CC000000")); cornerRadius = dp(12).toFloat() })
-    hudText.setPadding(dp(16), dp(10), dp(16), dp(10))
-    hudText.visibility = View.GONE
-    playerRoot.addView(hudText, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER).apply { })
-
-    controls = LinearLayout(this)
-    controls.orientation = LinearLayout.VERTICAL
-    controls.gravity = Gravity.CENTER
-    controls.setBackgroundColor(Color.TRANSPARENT)
-
-    topBar = LinearLayout(this)
-    topBar.orientation = LinearLayout.HORIZONTAL
-    topBar.gravity = Gravity.CENTER_VERTICAL
-    topBar.setPadding(dp(12), dp(10), dp(12), dp(10))
-    topBar.background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Color.parseColor("#CC000000"), Color.TRANSPARENT))
-
-    val backBtn = ImageButton(this)
-    backBtn.setImageDrawable(IconDrawable(IconDrawable.BACK, Color.WHITE))
-    backBtn.background = null
-    backBtn.setOnClickListener { buzz(it); closePlayer() }
-    topBar.addView(backBtn, LinearLayout.LayoutParams(dp(40), dp(40)))
-
-    playerTitle = TextView(this)
-    playerTitle.setTextColor(Color.WHITE); playerTitle.textSize = 14f; playerTitle.typeface = fontBold
-    playerTitle.isSingleLine = true; playerTitle.ellipsize = android.text.TextUtils.TruncateAt.END
-    topBar.addView(playerTitle, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(8) })
-
-    unlockBtn = ImageButton(this)
-    unlockBtn.setImageDrawable(IconDrawable(IconDrawable.UNLOCK, Color.WHITE))
-    unlockBtn.background = null
-    unlockBtn.visibility = View.GONE
-    unlockBtn.setOnClickListener { buzz(it); unlockPlayer() }
-    topBar.addView(unlockBtn, LinearLayout.LayoutParams(dp(40), dp(40)))
-
-    controls.addView(topBar, LinearLayout.LayoutParams(-1, -2))
-
-    val midSpace = View(this)
-    controls.addView(midSpace, LinearLayout.LayoutParams(-1, 0, 1f))
-
-    val midRow = LinearLayout(this)
-    midRow.orientation = LinearLayout.HORIZONTAL
-    midRow.gravity = Gravity.CENTER
-
-    val rewind = ImageButton(this)
-    rewind.setImageDrawable(IconDrawable(IconDrawable.ROTATE, Color.WHITE))
-    rewind.background = null
-    rewind.scaleX = -1f
-    rewind.setOnClickListener { buzz(it); player?.seekBack(); showControls() }
-    midRow.addView(rewind, LinearLayout.LayoutParams(dp(48), dp(48)).apply { marginEnd = dp(30) })
-
-    playPause = ImageView(this)
-    playPause.setImageDrawable(pauseDrawable)
-    playPause.background = GradientDrawable().apply { setColor(Color.parseColor("#55000000")); shape = GradientDrawable.OVAL }
-    playPause.setPadding(dp(14), dp(14), dp(14), dp(14))
-    playPause.setOnClickListener { buzz(it); togglePlay() }
-    midRow.addView(playPause, LinearLayout.LayoutParams(dp(72), dp(72)))
-
-    val forward = ImageButton(this)
-    forward.setImageDrawable(IconDrawable(IconDrawable.ROTATE, Color.WHITE))
-    forward.background = null
-    forward.setOnClickListener { buzz(it); player?.seekForward(); showControls() }
-    midRow.addView(forward, LinearLayout.LayoutParams(dp(48), dp(48)).apply { marginStart = dp(30) })
-
-    controls.addView(midRow, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER })
-
-    val midSpace2 = View(this)
-    controls.addView(midSpace2, LinearLayout.LayoutParams(-1, 0, 1f))
-
-    val bottomBar = LinearLayout(this)
-    bottomBar.orientation = LinearLayout.VERTICAL
-    bottomBar.setPadding(dp(12), dp(8), dp(12), dp(12))
-    bottomBar.background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(Color.parseColor("#CC000000"), Color.TRANSPARENT))
-
-    val timeRow = LinearLayout(this)
-    timeRow.orientation = LinearLayout.HORIZONTAL
-    timeRow.gravity = Gravity.CENTER_VERTICAL
-
-    timeText = TextView(this)
-    timeText.setTextColor(Color.WHITE); timeText.textSize = 12f
-    timeRow.addView(timeText, LinearLayout.LayoutParams(-2, -2))
-
-    val sp = View(this)
-    timeRow.addView(sp, LinearLayout.LayoutParams(0, 1, 1f))
-
-    speedBtn = TextView(this)
-    speedBtn.text = "1x"; speedBtn.setTextColor(Color.WHITE); speedBtn.textSize = 13f
-    speedBtn.setPadding(dp(12), dp(4), dp(12), dp(4))
-    speedBtn.background = GradientDrawable().apply { setColor(Color.parseColor("#44FFFFFF")); cornerRadius = dp(12).toFloat() }
-    speedBtn.setOnClickListener { buzz(it); cycleSpeed() }
-    timeRow.addView(speedBtn)
-
-    commentBadge = TextView(this)
-    commentBadge.text = "💬"; commentBadge.textSize = 16f; commentBadge.gravity = Gravity.CENTER
-    commentBadge.setPadding(dp(10), dp(4), dp(10), dp(4))
-    commentBadge.background = GradientDrawable().apply { setColor(Color.parseColor("#44FFFFFF")); cornerRadius = dp(12).toFloat() }
-    commentBadge.setOnClickListener { buzz(it); toggleComments() }
-    timeRow.addView(commentBadge, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(8) })
-
-    fsBtn = ImageButton(this)
-    fsBtn.setImageDrawable(IconDrawable(IconDrawable.EXPAND, Color.WHITE))
-    fsBtn.background = null
-    fsBtn.setOnClickListener { buzz(it); setFullscreen(!fullscreen) }
-    timeRow.addView(fsBtn, LinearLayout.LayoutParams(dp(36), dp(36)).apply { marginStart = dp(4) })
-
-    bottomBar.addView(timeRow)
-
-    seekBar = SeekBar(this)
-    seekBar.max = 1000
-    seekBar.progressTintList = android.content.res.ColorStateList.valueOf(red)
-    seekBar.thumbTintList = android.content.res.ColorStateList.valueOf(red)
-    seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-        override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
-            if (fromUser) { timeText.text = fmt(progress.toLong()) + " / " + fmt((player?.duration ?: 0).coerceAtLeast(0)) }
+    private fun humanSize(b: Long): String {
+        return when {
+            b >= 1_073_741_824 -> String.format(Locale.US, "%.1f GB", b / 1_073_741_824.0)
+            b >= 1_048_576 -> String.format(Locale.US, "%.0f MB", b / 1_048_576.0)
+            b >= 1024 -> String.format(Locale.US, "%.0f KB", b / 1024.0)
+            else -> "$b B"
         }
-        override fun onStartTrackingTouch(sb: SeekBar?) { userSeeking = true }
-        override fun onStopTrackingTouch(sb: SeekBar?) {
-            userSeeking = false
-            player?.seekTo((sb?.progress ?: 0).toLong())
-        }
-    })
-    bottomBar.addView(seekBar, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
+    }
 
-    controls.addView(bottomBar, LinearLayout.LayoutParams(-1, -2))
+    private fun buildTopBlock(): View {
+        val top = LinearLayout(this)
+        top.orientation = LinearLayout.VERTICAL
+        top.setBackgroundColor(bg)
+        top.setPadding(dp(14), dp(14), dp(14), dp(6))
 
-    playerRoot.addView(controls, FrameLayout.LayoutParams(-1, -1))
+        logo = LinearLayout(this)
+        logo.orientation = LinearLayout.HORIZONTAL
+        logo.gravity = Gravity.CENTER_VERTICAL
 
-    commentsPanel = LinearLayout(this)
-    commentsPanel.orientation = LinearLayout.VERTICAL
-    commentsPanel.setBackgroundColor(Color.parseColor("#F0121212"))
-    commentsPanel.visibility = View.GONE
+        val iconBox = TextView(this)
+        iconBox.text = "▶"; iconBox.setTextColor(Color.WHITE); iconBox.textSize = 15f
+        iconBox.gravity = Gravity.CENTER
+        iconBox.background = GradientDrawable().apply { setColor(red); cornerRadius = dp(10).toFloat() }
+        val ibLp = LinearLayout.LayoutParams(dp(34), dp(34))
+        logo.addView(iconBox, ibLp)
 
-    val cHead = LinearLayout(this)
-    cHead.orientation = LinearLayout.HORIZONTAL
-    cHead.gravity = Gravity.CENTER_VERTICAL
-    cHead.setPadding(dp(14), dp(12), dp(14), dp(12))
+        val title = TextView(this)
+        title.text = appName; title.setTextColor(Color.WHITE); title.textSize = 19f; title.typeface = fontBold
+        title.setPadding(dp(10), 0, 0, 0)
+        logo.addView(title)
 
-    commentsTitle = TextView(this)
-    commentsTitle.text = "التعليقات"; commentsTitle.setTextColor(Color.WHITE); commentsTitle.textSize = 16f; commentsTitle.typeface = fontBold
-    cHead.addView(commentsTitle, LinearLayout.LayoutParams(0, -2, 1f))
+        val spacer = View(this)
+        logo.addView(spacer, LinearLayout.LayoutParams(0, 1, 1f))
 
-    val closeC = ImageButton(this)
-    closeC.setImageDrawable(IconDrawable(IconDrawable.BACK, Color.WHITE))
-    closeC.background = null
-    closeC.setOnClickListener { hideComments() }
-    cHead.addView(closeC, LinearLayout.LayoutParams(dp(40), dp(40)))
+        val refreshBtn = ImageButton(this)
+        refreshBtn.setImageDrawable(IconDrawable(IconDrawable.REFRESH, navInactive))
+        refreshBtn.background = null
+        refreshBtn.setOnClickListener { buzz(it); reloadVideos() }
+        logo.addView(refreshBtn, LinearLayout.LayoutParams(dp(40), dp(40)))
 
-    commentsPanel.addView(cHead)
+        val folderBtn = ImageButton(this)
+        folderBtn.setImageDrawable(IconDrawable(IconDrawable.FOLDER, navInactive))
+        folderBtn.background = null
+        folderBtn.setOnClickListener { buzz(it); pickFolderLauncher.launch(null) }
+        logo.addView(folderBtn, LinearLayout.LayoutParams(dp(40), dp(40)))
 
-    val cScroll = ScrollView(this)
-    commentsList = LinearLayout(this)
-    commentsList.orientation = LinearLayout.VERTICAL
-    cScroll.addView(commentsList)
-    commentsPanel.addView(cScroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        top.addView(logo)
 
-    playerRoot.addView(commentsPanel, FrameLayout.LayoutParams(dp(320), -1, Gravity.END))
-
-    setupGestures()
-}
-
-private fun setupGestures() {
-    gestures = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
-        override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-            if (controls.visibility == View.VISIBLE) hideControls() else showControls()
-            return true
-        }
-        override fun onDoubleTap(e: MotionEvent): Boolean {
-            val w = gestureOverlay.width
-            if (e.x < w / 3f) { player?.seekBack(); hud("⏪ 10 ثوانٍ") }
-            else if (e.x > 2 * w / 3f) { player?.seekForward(); hud("⏩ 10 ثوانٍ") }
-            else togglePlay()
-            return true
-        }
-        override fun onScroll(e1: MotionEvent?, e2: MotionEvent, dx: Float, dy: Float): Boolean {
-            if (e1 == null) return false
-            val w = gestureOverlay.width
-            val h = gestureOverlay.height
-            if (gestureMode == 0) {
-                val ddx = e2.x - e1.x; val ddy = e2.y - e1.y
-                gestureMode = if (Math.abs(ddx) > Math.abs(ddy)) 2 else 1
+        searchBox = EditText(this)
+        searchBox.hint = "ابحث عن فيديو..."
+        searchBox.setTextColor(Color.WHITE); searchBox.setHintTextColor(Color.parseColor("#777777"))
+        searchBox.textSize = 15f; searchBox.isSingleLine = true
+        searchBox.setBackground(GradientDrawable().apply {
+            setColor(Color.parseColor("#1F1F1F")); cornerRadius = dp(22).toFloat()
+            setStroke(dp(1), Color.parseColor("#333333"))
+        })
+        searchBox.setPadding(dp(18), dp(10), dp(18), dp(10))
+        searchBox.setText(query)
+        searchBox.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                query = s?.toString() ?: ""
+                applyFilter()
             }
-            when (gestureMode) {
-                1 -> {
-                    val delta = (e1.y - e2.y) / h * 2f
-                    val cur = player?.volume ?: 1f
-                    val nv = (cur + delta * (e1.x < w / 2f ? 0.1f : 1f)).coerceIn(0f, 1f)
-                    player?.volume = nv
-                    audio.setStreamVolume(AudioManager.STREAM_MUSIC, (nv * audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)).toInt(), 0)
-                    hud(if (e1.x < w / 2f) "🔆 السطوع" else "🔊 الصوت ${(nv * 100).toInt()}%")
+        })
+        top.addView(searchBox, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+        return top
+    }
+
+    private fun buildTabs(): View {
+        val scroll = HorizontalScrollView(this)
+        scroll.isHorizontalScrollBarEnabled = false
+        scroll.setBackgroundColor(bg)
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.setPadding(dp(10), dp(6), dp(10), dp(6))
+        row.layoutDirection = View.LAYOUT_DIRECTION_RTL
+
+        for ((i, name) in tabNames.withIndex()) {
+            val col = LinearLayout(this)
+            col.orientation = LinearLayout.VERTICAL
+            col.gravity = Gravity.CENTER
+
+            val tv = TextView(this)
+            tv.text = name; tv.textSize = 14f; tv.setPadding(dp(14), dp(8), dp(14), dp(6))
+            tv.setTextColor(if (i == tab) Color.WHITE else gray)
+            tv.typeface = if (i == tab) fontBold else fontRegular
+
+            val line = View(this)
+            line.setBackgroundColor(red)
+            val lp = LinearLayout.LayoutParams(-1, dp(3))
+            lp.marginStart = dp(10); lp.marginEnd = dp(10)
+            line.layoutParams = lp
+            line.visibility = if (i == tab) View.VISIBLE else View.INVISIBLE
+
+            col.addView(tv); col.addView(line)
+            tv.setOnClickListener { buzz(it); selectTab(i) }
+            tabTexts.add(tv); tabLines.add(line)
+            row.addView(col, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(2) })
+        }
+        scroll.addView(row)
+        return scroll
+    }
+
+    private fun selectTab(idx: Int) {
+        if (tab == idx && idx != YT_TAB) return
+        val old = tab
+        tab = idx; prefs.lastTab = idx
+        for (i in tabTexts.indices) {
+            tabTexts[i].setTextColor(if (i == idx) Color.WHITE else gray)
+            tabTexts[i].typeface = if (i == idx) fontBold else fontRegular
+            tabLines[i].visibility = if (i == idx) View.VISIBLE else View.INVISIBLE
+        }
+        ytPanel.visibility = if (idx == YT_TAB) View.VISIBLE else View.GONE
+        if (idx == YT_TAB) {
+            ytTab.onShown()
+        } else if (old == YT_TAB) {
+            ytTab.onHidden()
+        }
+        applyFilter()
+    }
+
+    private fun buildBottomNav(): View {
+        val nav = LinearLayout(this)
+        nav.orientation = LinearLayout.HORIZONTAL
+        nav.setBackgroundColor(Color.parseColor("#151515"))
+        nav.gravity = Gravity.CENTER
+        nav.layoutDirection = View.LAYOUT_DIRECTION_RTL
+
+        val items = arrayOf(
+            "الرئيسية" to IconDrawable.HOME,
+            "بحث" to IconDrawable.SEARCH,
+            "المجلد" to IconDrawable.FOLDER,
+            "YouTube" to IconDrawable.PLAY
+        )
+        for ((i, item) in items.withIndex()) {
+            val col = LinearLayout(this)
+            col.orientation = LinearLayout.VERTICAL
+            col.gravity = Gravity.CENTER
+            col.setPadding(0, dp(8), 0, dp(6))
+
+            val icon = IconDrawable(item.second, if (i == 0) navActive else navInactive)
+            val iv = ImageView(this)
+            iv.setImageDrawable(icon)
+            col.addView(iv, LinearLayout.LayoutParams(dp(24), dp(24)))
+
+            val tv = TextView(this)
+            tv.text = item.first; tv.textSize = 11f
+            tv.setTextColor(if (i == 0) navActive else navInactive)
+            col.addView(tv)
+
+            col.setOnClickListener { buzz(it); handleNav(i) }
+            navRefs.add(NavRef(i, icon, tv))
+            nav.addView(col, LinearLayout.LayoutParams(0, -1, 1f))
+        }
+        return nav
+    }
+
+    private fun handleNav(i: Int) {
+        when (i) {
+            0 -> selectTab(0)
+            1 -> { searchBox.requestFocus(); val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager; imm.showSoftInput(searchBox, InputMethodManager.SHOW_IMPLICIT) }
+            2 -> pickFolderLauncher.launch(null)
+            3 -> selectTab(YT_TAB)
+        }
+        for (ref in navRefs) {
+            val active = ref.tabIdx == i
+            ref.icon.setIconColor(if (active) navActive else navInactive)
+            ref.label.setTextColor(if (active) navActive else navInactive)
+        }
+    }
+
+    private fun updateNavForTab() {
+        val activeIdx = if (tab == YT_TAB) 3 else if (tab == 0) 0 else -1
+        for (ref in navRefs) {
+            val active = ref.tabIdx == activeIdx
+            ref.icon.setIconColor(if (active) navActive else navInactive)
+            ref.label.setTextColor(if (active) navActive else navInactive)
+        }
+    }
+
+    private fun applyFilter() {
+        if (tab == YT_TAB) return
+        shown.clear()
+        val q = query.trim().lowercase(Locale.getDefault())
+        val base = if (q.isEmpty()) all else all.filter { it.title.lowercase(Locale.getDefault()).contains(q) }
+        when (tab) {
+            0 -> shown.addAll(base)
+            1 -> shown.addAll(base.filter { prefs.getPosition(it.id) in 1 until it.duration })
+            2 -> shown.addAll(base.sortedByDescending { it.duration })
+            3 -> shown.addAll(base.filter { prefs.isWatched(it.id) })
+            4 -> shown.addAll(base.filter { it.duration in 1..60_000 })
+        }
+        updateContinueHeader()
+        adapter.notifyDataSetChanged()
+        emptyText.text = if (shown.isEmpty()) {
+            if (tab == 1) "لا توجد فيديوهات قيد المشاهدة" else "لا توجد فيديوهات"
+        } else ""
+        updateNavForTab()
+    }
+
+    private fun updateContinueHeader() {
+        continueHeader.removeAllViews()
+        if (tab != 1 || shown.isEmpty()) { continueHeader.visibility = View.GONE; return }
+        continueHeader.visibility = View.VISIBLE
+        val title = TextView(this)
+        title.text = "تابع من حيث توقفت"; title.setTextColor(Color.WHITE); title.textSize = 16f; title.typeface = fontBold
+        title.setPadding(dp(16), dp(12), dp(16), dp(8))
+        continueHeader.addView(title)
+    }
+
+    private fun reloadVideos() {
+        if (refreshing) return
+        refreshing = true
+        refreshBar.visibility = View.VISIBLE
+        loadVideos()
+    }
+
+    private fun afterDeleted(v: VideoItem) {
+        all.removeAll { it.id == v.id }
+        prefs.removePosition(v.id)
+        applyFilter()
+    }
+
+    private fun checkPermissionAndLoad() {
+        if (Build.VERSION.SDK_INT >= 33) {
+            val perm = if (Build.VERSION.SDK_INT >= 34) Manifest.permission.READ_MEDIA_VIDEO else Manifest.permission.READ_EXTERNAL_STORAGE
+            if (checkSelfPermission(perm) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(perm), 100)
+                return
+            }
+        } else if (Build.VERSION.SDK_INT >= 23 && Build.VERSION.SDK_INT < 33) {
+            if (checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE), 100)
+                return
+            }
+        }
+        loadVideos()
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 100) loadVideos()
+    }
+
+    private fun loadVideos() {
+        pool.execute {
+            val result = ArrayList<VideoItem>()
+            try {
+                val collection = if (Build.VERSION.SDK_INT >= 29) {
+                    MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+                } else {
+                    MediaStore.Video.Media.EXTERNAL_CONTENT_URI
                 }
-                2 -> {
-                    val delta = (e2.x - e1.x) / w * 60000f
-                    val dur = player?.duration ?: return false
-                    if (dur > 0) {
-                        val np = (e1.let { player?.currentPosition?.plus(delta.toLong()) ?: 0L }).coerceIn(0, dur)
-                        player?.seekTo(np)
-                        hud("${fmt(np)} / ${fmt(dur)}")
+                val proj = arrayOf(MediaStore.Video.Media._ID, MediaStore.Video.Media.TITLE, MediaStore.Video.Media.DURATION)
+                val sel: String? = null
+                val selArgs: Array<String>? = null
+                val sort = MediaStore.Video.Media.DATE_ADDED + " DESC"
+
+                contentResolver.query(collection, proj, sel, selArgs, sort)?.use { c ->
+                    val idIdx = c.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
+                    val tIdx = c.getColumnIndexOrThrow(MediaStore.Video.Media.TITLE)
+                    val dIdx = c.getColumnIndexOrThrow(MediaStore.Video.Media.DURATION)
+                    while (c.moveToNext()) {
+                        val id = c.getLong(idIdx)
+                        val title = c.getString(tIdx) ?: "فيديو"
+                        val dur = c.getLong(dIdx)
+                        val uri = ContentUris.withAppendedId(collection, id)
+                        result.add(VideoItem(id, title, dur, uri))
                     }
                 }
-            }
-            return true
-        }
-        override fun onDown(e: MotionEvent): Boolean = true
-    })
-
-    gestureOverlay.setOnTouchListener { v, e ->
-        when (e.action) {
-            MotionEvent.ACTION_DOWN -> { gestureMode = 0; v.performClick() }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { gestureMode = 0; ui.postDelayed(hideHud, 800) }
-        }
-        gestures.onTouchEvent(e)
-    }
-}
-
-private fun hud(msg: String) {
-    hudText.text = msg; hudText.visibility = View.VISIBLE
-    ui.removeCallbacks(hideHud); ui.postDelayed(hideHud, 1200)
-}
-
-private fun showControls() {
-    controls.animate().alpha(1f).setDuration(150).withStartAction { controls.visibility = View.VISIBLE }.start()
-    ui.removeCallbacks(hideControlsRunnable)
-    ui.postDelayed(hideControlsRunnable, 3500)
-}
-
-private val hideControlsRunnable = Runnable {
-    if (!commentsOpen && player?.isPlaying == true) {
-        controls.animate().alpha(0f).setDuration(200).withEndAction { if (controls.alpha == 0f) controls.visibility = View.INVISIBLE }.start()
-    }
-}
-
-private fun hideControls() {
-    controls.animate().alpha(0f).setDuration(200).withEndAction { controls.visibility = View.INVISIBLE }.start()
-}
-
-private fun showUnlockBtn() {
-    unlockBtn.visibility = View.VISIBLE
-    ui.removeCallbacks(hideUnlock)
-    ui.postDelayed(hideUnlock, 2500)
-}
-
-private fun unlockPlayer() {
-    locked = false
-    unlockBtn.visibility = View.GONE
-    gestureOverlay.visibility = View.VISIBLE
-}
-
-private fun togglePlay() {
-    val p = player ?: return
-    if (p.isPlaying) { p.pause(); playPause.setImageDrawable(playDrawable) }
-    else { p.play(); playPause.setImageDrawable(pauseDrawable) }
-    showControls()
-}
-
-private fun cycleSpeed() {
-    speedIdx = (speedIdx + 1) % speeds.size
-    val sp = speeds[speedIdx]
-    player?.setPlaybackSpeed(sp)
-    speedBtn.text = if (sp == sp.toInt().toFloat()) "${sp.toInt()}x" else "${sp}x"
-    showControls()
-}
-
-private fun setFullscreen(on: Boolean) {
-    fullscreen = on
-    if (on) {
-        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-        window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
-        topBar.visibility = View.GONE
-        fsBtn.setImageDrawable(IconDrawable(IconDrawable.COMPRESS, Color.WHITE))
-    } else {
-        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
-        topBar.visibility = View.VISIBLE
-        fsBtn.setImageDrawable(IconDrawable(IconDrawable.EXPAND, Color.WHITE))
-    }
-}
-private fun openPlayer(v: VideoItem) {
-    current = v
-    playerTitle.text = v.title
-    commentsOpen = false
-    commentsPanel.visibility = View.GONE
-    commentsList.removeAllViews()
-    commentsCount = 0
-    expandedCommentIds.clear()
-    commentBadge.text = "💬"
-
-    playerRoot.visibility = View.VISIBLE
-    controls.visibility = View.VISIBLE
-    controls.alpha = 1f
-    playPause.setImageDrawable(pauseDrawable)
-    speedIdx = 2; speedBtn.text = "1x"
-
-    val p = player ?: ExoPlayer.Builder(this).build().also { player = it }
-    prepared = false
-    p.clearMediaItems()
-    p.setMediaItem(MediaItem.fromUri(v.uri))
-
-    val savedPos = prefs.getPosition(v.id)
-    p.prepare()
-    p.playWhenReady = true
-    if (savedPos > 0) {
-        p.seekTo(savedPos)
-    }
-
-    p.addListener(object : Player.Listener {
-        override fun onPlaybackStateChanged(state: Int) {
-            if (state == Player.STATE_READY) {
-                prepared = true
-                val dur = p.duration
-                if (dur != C.TIME_UNSET && dur > 0) {
-                    seekBar.max = dur.toInt()
+            } catch (_: Exception) {}
+            ui.post {
+                all.clear(); all.addAll(result)
+                applyFilter()
+                if (refreshing) {
+                    refreshing = false
+                    refreshBar.visibility = View.GONE
                 }
-                if (!p.isPlaying) p.play()
+                restorePendingPlayer()
             }
         }
-        override fun onIsPlayingChanged(isPlaying: Boolean) {
-            playPause.setImageDrawable(if (isPlaying) pauseDrawable else playDrawable)
-            showControls()
-        }
-        override fun onVideoSizeChanged(vs: VideoSize) {
-            videoW = vs.width; videoH = vs.height
-            if (videoH > 0) {
-                aspectLayout.setAspectRatio(videoW.toFloat() / videoH.toFloat())
-            }
-        }
-    })
+    }
 
-    showControls()
-    if (pendingRestoreComments) {
-        pendingRestoreComments = false
+    private fun restorePendingPlayer() {
+        if (pendingOpenId != -1L) {
+            val v = all.find { it.id == pendingOpenId }
+            pendingOpenId = -1L
+            if (v != null) openPlayer(v)
+        }
+        updateNavForTab()
+    }
+
+    private fun buildPlayer() {
+        playerRoot = FrameLayout(this)
+        playerRoot.setBackgroundColor(Color.BLACK)
+
+        aspectLayout = AspectRatioFrameLayout(this)
+        aspectLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+        surfaceView = SurfaceView(this)
+        surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
+            override fun surfaceCreated(holder: SurfaceHolder) {}
+            override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {}
+            override fun surfaceDestroyed(holder: SurfaceHolder) {}
+        })
+        aspectLayout.addView(surfaceView, FrameLayout.LayoutParams(-1, -1))
+        playerRoot.addView(aspectLayout, FrameLayout.LayoutParams(-1, -1))
+
+        gestureOverlay = View(this)
+        playerRoot.addView(gestureOverlay, FrameLayout.LayoutParams(-1, -1))
+
+        hudText = TextView(this)
+        hudText.setTextColor(Color.WHITE); hudText.textSize = 16f; hudText.typeface = fontBold
+        hudText.setBackground(GradientDrawable().apply { setColor(Color.parseColor("#CC000000")); cornerRadius = dp(12).toFloat() })
+        hudText.setPadding(dp(16), dp(10), dp(16), dp(10))
+        hudText.visibility = View.GONE
+        playerRoot.addView(hudText, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+
+        controls = LinearLayout(this)
+        controls.orientation = LinearLayout.VERTICAL
+        controls.gravity = Gravity.CENTER
+        controls.setBackgroundColor(Color.TRANSPARENT)
+
+        topBar = LinearLayout(this)
+        topBar.orientation = LinearLayout.HORIZONTAL
+        topBar.gravity = Gravity.CENTER_VERTICAL
+        topBar.setPadding(dp(12), dp(10), dp(12), dp(10))
+        topBar.background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Color.parseColor("#CC000000"), Color.TRANSPARENT))
+
+        val backBtn = ImageButton(this)
+        backBtn.setImageDrawable(IconDrawable(IconDrawable.BACK, Color.WHITE))
+        backBtn.background = null
+        backBtn.setOnClickListener { buzz(it); closePlayer() }
+        topBar.addView(backBtn, LinearLayout.LayoutParams(dp(40), dp(40)))
+
+        playerTitle = TextView(this)
+        playerTitle.setTextColor(Color.WHITE); playerTitle.textSize = 14f; playerTitle.typeface = fontBold
+        playerTitle.isSingleLine = true; playerTitle.ellipsize = android.text.TextUtils.TruncateAt.END
+        topBar.addView(playerTitle, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(8) })
+
+        unlockBtn = ImageButton(this)
+        unlockBtn.setImageDrawable(IconDrawable(IconDrawable.UNLOCK, Color.WHITE))
+        unlockBtn.background = null
+        unlockBtn.visibility = View.GONE
+        unlockBtn.setOnClickListener { buzz(it); unlockPlayer() }
+        topBar.addView(unlockBtn, LinearLayout.LayoutParams(dp(40), dp(40)))
+
+        controls.addView(topBar, LinearLayout.LayoutParams(-1, -2))
+
+        val midSpace = View(this)
+        controls.addView(midSpace, LinearLayout.LayoutParams(-1, 0, 1f))
+
+        val midRow = LinearLayout(this)
+        midRow.orientation = LinearLayout.HORIZONTAL
+        midRow.gravity = Gravity.CENTER
+
+        val rewind = ImageButton(this)
+        rewind.setImageDrawable(IconDrawable(IconDrawable.ROTATE, Color.WHITE))
+        rewind.background = null
+        rewind.scaleX = -1f
+        rewind.setOnClickListener { buzz(it); player?.seekBack(); showControls() }
+        midRow.addView(rewind, LinearLayout.LayoutParams(dp(48), dp(48)).apply { marginEnd = dp(30) })
+
+        playPause = ImageView(this)
+        playPause.setImageDrawable(pauseDrawable)
+        playPause.background = GradientDrawable().apply { setColor(Color.parseColor("#55000000")); shape = GradientDrawable.OVAL }
+        playPause.setPadding(dp(14), dp(14), dp(14), dp(14))
+        playPause.setOnClickListener { buzz(it); togglePlay() }
+        midRow.addView(playPause, LinearLayout.LayoutParams(dp(72), dp(72)))
+
+        val forward = ImageButton(this)
+        forward.setImageDrawable(IconDrawable(IconDrawable.ROTATE, Color.WHITE))
+        forward.background = null
+        forward.setOnClickListener { buzz(it); player?.seekForward(); showControls() }
+        midRow.addView(forward, LinearLayout.LayoutParams(dp(48), dp(48)).apply { marginStart = dp(30) })
+
+        controls.addView(midRow, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER })
+
+        val midSpace2 = View(this)
+        controls.addView(midSpace2, LinearLayout.LayoutParams(-1, 0, 1f))
+
+        val bottomBar = LinearLayout(this)
+        bottomBar.orientation = LinearLayout.VERTICAL
+        bottomBar.setPadding(dp(12), dp(8), dp(12), dp(12))
+        bottomBar.background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(Color.parseColor("#CC000000"), Color.TRANSPARENT))
+
+        val timeRow = LinearLayout(this)
+        timeRow.orientation = LinearLayout.HORIZONTAL
+        timeRow.gravity = Gravity.CENTER_VERTICAL
+
+        timeText = TextView(this)
+        timeText.setTextColor(Color.WHITE); timeText.textSize = 12f
+        timeRow.addView(timeText, LinearLayout.LayoutParams(-2, -2))
+
+        val sp = View(this)
+        timeRow.addView(sp, LinearLayout.LayoutParams(0, 1, 1f))
+
+        speedBtn = TextView(this)
+        speedBtn.text = "1x"; speedBtn.setTextColor(Color.WHITE); speedBtn.textSize = 13f
+        speedBtn.setPadding(dp(12), dp(4), dp(12), dp(4))
+        speedBtn.background = GradientDrawable().apply { setColor(Color.parseColor("#44FFFFFF")); cornerRadius = dp(12).toFloat() }
+        speedBtn.setOnClickListener { buzz(it); cycleSpeed() }
+        timeRow.addView(speedBtn)
+
+        commentBadge = TextView(this)
+        commentBadge.text = "💬"; commentBadge.textSize = 16f; commentBadge.gravity = Gravity.CENTER
+        commentBadge.setPadding(dp(10), dp(4), dp(10), dp(4))
+        commentBadge.background = GradientDrawable().apply { setColor(Color.parseColor("#44FFFFFF")); cornerRadius = dp(12).toFloat() }
+        commentBadge.setOnClickListener { buzz(it); toggleComments() }
+        timeRow.addView(commentBadge, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(8) })
+
+        fsBtn = ImageButton(this)
+        fsBtn.setImageDrawable(IconDrawable(IconDrawable.EXPAND, Color.WHITE))
+        fsBtn.background = null
+        fsBtn.setOnClickListener { buzz(it); setFullscreen(!fullscreen) }
+        timeRow.addView(fsBtn, LinearLayout.LayoutParams(dp(36), dp(36)).apply { marginStart = dp(4) })
+
+        bottomBar.addView(timeRow)
+
+        seekBar = SeekBar(this)
+        seekBar.max = 1000
+        seekBar.progressTintList = android.content.res.ColorStateList.valueOf(red)
+        seekBar.thumbTintList = android.content.res.ColorStateList.valueOf(red)
+        seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser) { timeText.text = fmt(progress.toLong()) + " / " + fmt((player?.duration ?: 0).coerceAtLeast(0)) }
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) { userSeeking = true }
+            override fun onStopTrackingTouch(sb: SeekBar?) {
+                userSeeking = false
+                player?.seekTo((sb?.progress ?: 0).toLong())
+            }
+        })
+        bottomBar.addView(seekBar, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
+
+        controls.addView(bottomBar, LinearLayout.LayoutParams(-1, -2))
+
+        playerRoot.addView(controls, FrameLayout.LayoutParams(-1, -1))
+
+        commentsPanel = LinearLayout(this)
+        commentsPanel.orientation = LinearLayout.VERTICAL
+        commentsPanel.setBackgroundColor(Color.parseColor("#F0121212"))
+        commentsPanel.visibility = View.GONE
+
+        val cHead = LinearLayout(this)
+        cHead.orientation = LinearLayout.HORIZONTAL
+        cHead.gravity = Gravity.CENTER_VERTICAL
+        cHead.setPadding(dp(14), dp(12), dp(14), dp(12))
+
+        commentsTitle = TextView(this)
+        commentsTitle.text = "التعليقات"; commentsTitle.setTextColor(Color.WHITE); commentsTitle.textSize = 16f; commentsTitle.typeface = fontBold
+        cHead.addView(commentsTitle, LinearLayout.LayoutParams(0, -2, 1f))
+
+        val closeC = ImageButton(this)
+        closeC.setImageDrawable(IconDrawable(IconDrawable.BACK, Color.WHITE))
+        closeC.background = null
+        closeC.setOnClickListener { hideComments() }
+        cHead.addView(closeC, LinearLayout.LayoutParams(dp(40), dp(40)))
+
+        commentsPanel.addView(cHead)
+
+        val cScroll = ScrollView(this)
+        commentsList = LinearLayout(this)
+        commentsList.orientation = LinearLayout.VERTICAL
+        cScroll.addView(commentsList)
+        commentsPanel.addView(cScroll, LinearLayout.LayoutParams(-1, 0, 1f))
+
+        playerRoot.addView(commentsPanel, FrameLayout.LayoutParams(dp(320), -1, Gravity.END))
+
+        setupGestures()
+    }
+
+    private fun setupGestures() {
+        gestures = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                if (controls.visibility == View.VISIBLE) hideControls() else showControls()
+                return true
+            }
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                val w = gestureOverlay.width
+                if (e.x < w / 3f) { player?.seekBack(); hud("⏪ 10 ثوانٍ") }
+                else if (e.x > 2 * w / 3f) { player?.seekForward(); hud("⏩ 10 ثوانٍ") }
+                else togglePlay()
+                return true
+            }
+            override fun onScroll(e1: MotionEvent?, e2: MotionEvent, dx: Float, dy: Float): Boolean {
+                if (e1 == null) return false
+                val w = gestureOverlay.width
+                val h = gestureOverlay.height
+                if (gestureMode == 0) {
+                    val ddx = e2.x - e1.x; val ddy = e2.y - e1.y
+                    gestureMode = if (Math.abs(ddx) > Math.abs(ddy)) 2 else 1
+                }
+                when (gestureMode) {
+                    1 -> {
+                        val delta = (e1.y - e2.y) / h * 2f
+                        val cur = player?.volume ?: 1f
+                        val nv = (cur + delta * (e1.x < w / 2f ? 0.1f : 1f)).coerceIn(0f, 1f)
+                        player?.volume = nv
+                        audio.setStreamVolume(AudioManager.STREAM_MUSIC, (nv * audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)).toInt(), 0)
+                        hud(if (e1.x < w / 2f) "🔆 السطوع" else "🔊 الصوت ${(nv * 100).toInt()}%")
+                    }
+                    2 -> {
+                        val delta = (e2.x - e1.x) / w * 60000f
+                        val dur = player?.duration ?: return false
+                        if (dur > 0) {
+                            val np = (e1.let { player?.currentPosition?.plus(delta.toLong()) ?: 0L }).coerceIn(0, dur)
+                            player?.seekTo(np)
+                            hud("${fmt(np)} / ${fmt(dur)}")
+                        }
+                    }
+                }
+                return true
+            }
+            override fun onDown(e: MotionEvent): Boolean = true
+        })
+
+        gestureOverlay.setOnTouchListener { v, e ->
+            when (e.action) {
+                MotionEvent.ACTION_DOWN -> { gestureMode = 0; v.performClick() }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { gestureMode = 0; ui.postDelayed(hideHud, 800) }
+            }
+            gestures.onTouchEvent(e)
+        }
+    }
+
+    private fun hud(msg: String) {
+        hudText.text = msg; hudText.visibility = View.VISIBLE
+        ui.removeCallbacks(hideHud); ui.postDelayed(hideHud, 1200)
+    }
+
+    private fun showControls() {
+        controls.animate().alpha(1f).setDuration(150).withStartAction { controls.visibility = View.VISIBLE }.start()
+        ui.removeCallbacks(hideControlsRunnable)
+        ui.postDelayed(hideControlsRunnable, 3500)
+    }
+
+    private val hideControlsRunnable = Runnable {
+        if (!commentsOpen && player?.isPlaying == true) {
+            controls.animate().alpha(0f).setDuration(200).withEndAction { if (controls.alpha == 0f) controls.visibility = View.INVISIBLE }.start()
+        }
+    }
+
+    private fun hideControls() {
+        controls.animate().alpha(0f).setDuration(200).withEndAction { controls.visibility = View.INVISIBLE }.start()
+    }
+
+    private fun showUnlockBtn() {
+        unlockBtn.visibility = View.VISIBLE
+        ui.removeCallbacks(hideUnlock)
+        ui.postDelayed(hideUnlock, 2500)
+    }
+
+    private fun unlockPlayer() {
+        locked = false
+        unlockBtn.visibility = View.GONE
+        gestureOverlay.visibility = View.VISIBLE
+    }
+
+    private fun togglePlay() {
+        val p = player ?: return
+        if (p.isPlaying) { p.pause(); playPause.setImageDrawable(playDrawable) }
+        else { p.play(); playPause.setImageDrawable(pauseDrawable) }
+        showControls()
+    }
+
+    private fun cycleSpeed() {
+        speedIdx = (speedIdx + 1) % speeds.size
+        val sp = speeds[speedIdx]
+        player?.setPlaybackSpeed(sp)
+        speedBtn.text = if (sp == sp.toInt().toFloat()) "${sp.toInt()}x" else "${sp}x"
+        showControls()
+    }
+
+    private fun setFullscreen(on: Boolean) {
+        fullscreen = on
+        if (on) {
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+            topBar.visibility = View.GONE
+            fsBtn.setImageDrawable(IconDrawable(IconDrawable.COMPRESS, Color.WHITE))
+        } else {
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+            topBar.visibility = View.VISIBLE
+            fsBtn.setImageDrawable(IconDrawable(IconDrawable.EXPAND, Color.WHITE))
+        }
+    }
+
+    private fun openPlayer(v: VideoItem) {
+        current = v
+        playerTitle.text = v.title
+        commentsOpen = false
+        commentsPanel.visibility = View.GONE
+        commentsList.removeAllViews()
+        commentsCount = 0
+        expandedCommentIds.clear()
+        commentBadge.text = "💬"
+
+        playerRoot.visibility = View.VISIBLE
+        controls.visibility = View.VISIBLE
+        controls.alpha = 1f
+        playPause.setImageDrawable(pauseDrawable)
+        speedIdx = 2; speedBtn.text = "1x"
+
+        val p = player ?: ExoPlayer.Builder(this).build().also { player = it }
+        prepared = false
+        p.clearMediaItems()
+        p.setMediaItem(MediaItem.fromUri(v.uri))
+
+        val savedPos = prefs.getPosition(v.id)
+        p.prepare()
+        p.playWhenReady = true
+        if (savedPos > 0) {
+            p.seekTo(savedPos)
+        }
+
+        p.addListener(object : Player.Listener {
+            override fun onPlaybackStateChanged(state: Int) {
+                if (state == Player.STATE_READY) {
+                    prepared = true
+                    val dur = p.duration
+                    if (dur != C.TIME_UNSET && dur > 0) {
+                        seekBar.max = dur.toInt()
+                    }
+                    if (!p.isPlaying) p.play()
+                }
+            }
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                playPause.setImageDrawable(if (isPlaying) pauseDrawable else playDrawable)
+                showControls()
+            }
+            override fun onVideoSizeChanged(vs: VideoSize) {
+                videoW = vs.width; videoH = vs.height
+                if (videoH > 0) {
+                    aspectLayout.setAspectRatio(videoW.toFloat() / videoH.toFloat())
+                }
+            }
+        })
+
+        showControls()
+        if (pendingRestoreComments) {
+            pendingRestoreComments = false
+            fetchComments(v)
+        }
+    }
+
+    private fun closePlayer() {
+        val p = player
+        val c = current
+        if (p != null && c != null && prepared) saveProgress(p, c)
+        playerRoot.visibility = View.GONE
+        if (fullscreen) setFullscreen(false)
+        p?.stop()
+        p?.clearMediaItems()
+        prepared = false
+        current = null
+        commentsPanel.visibility = View.GONE
+        commentsOpen = false
+    }
+
+    private fun toggleComments() {
+        if (commentsOpen) hideComments() else showComments()
+    }
+
+    private fun showComments() {
+        commentsOpen = true
+        commentsPanel.visibility = View.VISIBLE
+        val v = current ?: return
         fetchComments(v)
     }
-}
 
-private fun closePlayer() {
-    val p = player
-    val c = current
-    if (p != null && c != null && prepared) saveProgress(p, c)
-    playerRoot.visibility = View.GONE
-    if (fullscreen) setFullscreen(false)
-    p?.stop()
-    p?.clearMediaItems()
-    prepared = false
-    current = null
-    commentsPanel.visibility = View.GONE
-    commentsOpen = false
-}
-
-private fun toggleComments() {
-    if (commentsOpen) hideComments() else showComments()
-}
-
-private fun showComments() {
-    commentsOpen = true
-    commentsPanel.visibility = View.VISIBLE
-    val v = current ?: return
-    fetchComments(v)
-}
-
-private fun hideComments() {
-    commentsOpen = false
-    commentsPanel.visibility = View.GONE
-}
-
-private fun fetchComments(v: VideoItem) {
-    commentsList.removeAllViews()
-    val loading = TextView(this)
-    loading.text = "جارٍ تحميل التعليقات..."; loading.setTextColor(gray); loading.textSize = 14f
-    loading.setPadding(dp(16), dp(16), dp(16), dp(16))
-    commentsList.addView(loading)
-
-    val title = v.title
-    pool.execute {
-        try {
-            val url = "https://www.youtube.com/results?search_query=" + Uri.encode(title)
-            val conn = URL(url).openConnection() as HttpURLConnection
-            conn.connectTimeout = 10000
-            conn.readTimeout = 10000
-            conn.requestMethod = "GET"
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0")
-            val html = conn.inputStream.bufferedReader().readText()
-            conn.disconnect()
-
-            val videoIdMatch = Regex("\"videoId\":\"([a-zA-Z0-9_-]{11})\"").find(html)
-            if (videoIdMatch == null) {
-                ui.post { showCommentsError("لم يتم العثور على الفيديو") }
-                return@execute
-            }
-            val videoId = videoIdMatch.groupValues[1]
-            ui.post { loadRealComments(videoId) }
-        } catch (e: Exception) {
-            ui.post { showCommentsError("تعذّر تحميل التعليقات: ${e.message}") }
-        }
-    }
-}
-
-private fun showCommentsError(msg: String) {
-    commentsList.removeAllViews()
-    val tv = TextView(this)
-    tv.text = msg; tv.setTextColor(gray); tv.textSize = 14f
-    tv.setPadding(dp(16), dp(16), dp(16), dp(16))
-    commentsList.addView(tv)
-}
-
-private fun loadRealComments(videoId: String) {
-    try {
-        if (!ytTab.isInitialized()) return
-        val svc = ServiceList.YouTube
-        val info = org.schabi.newpipe.extractor.stream.StreamInfo.getInfo(svc, "https://www.youtube.com/watch?v=" + videoId)
-        val commentsUrl = info.commentsUrl
-        if (commentsUrl == null || commentsUrl.isEmpty()) {
-            showCommentsError("لا توجد تعليقات")
-            return
-        }
-        val ci = CommentsInfo.getInfo(svc, commentsUrl)
-        val items = ci.relatedItems
-        commentsCount = ci.commentCount
-        commentBadge.text = if (commentsCount > 0) "💬 $commentsCount" else "💬"
-        commentsTitle.text = "التعليقات ($commentsCount)"
-        commentsList.removeAllViews()
-        if (items.isEmpty()) { showCommentsError("لا توجد تعليقات"); return }
-        for (item in items) {
-            addCommentView(item)
-        }
-    } catch (e: Exception) {
-        showCommentsError("تعذّر تحميل التعليقات: ${e.message}")
-    }
-}
-
-private fun addCommentView(item: CommentsInfoItem) {
-    val row = LinearLayout(this)
-    row.orientation = LinearLayout.VERTICAL
-    row.setPadding(dp(14), dp(8), dp(14), dp(8))
-
-    val author = TextView(this)
-    author.text = item.uploaderName ?: "مجهول"
-    author.setTextColor(red); author.textSize = 13f; author.typeface = fontBold
-    row.addView(author)
-
-    val comment = TextView(this)
-    comment.text = item.commentText?.content ?: ""
-    comment.setTextColor(Color.WHITE); comment.textSize = 13f
-    comment.setPadding(0, dp(4), 0, dp(4))
-    row.addView(comment)
-
-    val likes = TextView(this)
-    likes.text = "👍 ${item.likeCount}"
-    likes.setTextColor(gray); likes.textSize = 11f
-    row.addView(likes)
-
-    commentsList.addView(row)
-
-    val divider = View(this)
-    divider.setBackgroundColor(Color.parseColor("#2A2A2A"))
-    commentsList.addView(divider, LinearLayout.LayoutParams(-1, dp(1)))
-}
-
-override fun onPause() {
-    super.onPause()
-    val p = player; val c = current
-    if (p != null && c != null && prepared) saveProgress(p, c)
-    if (p != null && p.isPlaying) p.pause()
-    if (Build.VERSION.SDK_INT >= 26) {
-        try {
-            enterPictureInPictureMode(PictureInPictureParams.Builder()
-                .setAspectRatio(Rational(16, 9)).build())
-        } catch (_: Exception) {}
-    }
-}
-
-override fun onResume() {
-    super.onResume()
-    if (!firstResume) loadVideos()
-    firstResume = false
-    if (!observerRegistered) {
-        try {
-            contentResolver.registerContentObserver(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true, mediaObserver)
-            observerRegistered = true
-        } catch (_: Exception) {}
-    }
-}
-
-override fun onStop() {
-    super.onStop()
-    if (!isInPictureInPictureMode) {
-        player?.pause()
-    }
-}
-
-override fun onDestroy() {
-    super.onDestroy()
-    pool.shutdown()
-    mediaObserver.let {
-        try { contentResolver.unregisterContentObserver(it) } catch (_: Exception) {}
-    }
-    player?.release()
-    player = null
-    cache.evictAll()
-}
-
-override fun onPictureInPictureModeChanged(isInPip: Boolean, newConfig: Configuration) {
-    super.onPictureInPictureModeChanged(isInPip, newConfig)
-    if (isInPip) {
-        controls.visibility = View.GONE
+    private fun hideComments() {
+        commentsOpen = false
         commentsPanel.visibility = View.GONE
-    } else {
-        controls.visibility = View.VISIBLE
     }
-}
 
-private fun treeToPath(uri: Uri): String? {
-    if (Build.VERSION.SDK_INT >= 21 && DocumentsContract.isTreeUri(uri)) {
-        val docId = DocumentsContract.getTreeDocumentId(uri)
-        val parts = docId.split(":")
-        return if (parts.size >= 2) {
-            val type = parts[0]; val path = parts[1]
-            if (type == "primary") Environment.getExternalStorageDirectory().path + "/" + path
-            else "/storage/$type/$path"
-        } else null
-    }
-    return null
-}
+    private fun fetchComments(v: VideoItem) {
+        commentsList.removeAllViews()
+        val loading = TextView(this)
+        loading.text = "جارٍ تحميل التعليقات..."; loading.setTextColor(gray); loading.textSize = 14f
+        loading.setPadding(dp(16), dp(16), dp(16), dp(16))
+        commentsList.addView(loading)
 
-private fun updateMediaStore(uri: Uri) {
-    try {
-        if (Build.VERSION.SDK_INT >= 29) {
-            val values = ContentValues()
-            values.put(MediaStore.Video.Media.IS_PENDING, 0)
-            contentResolver.update(uri, values, null, null)
-        }
-    } catch (_: Exception) {}
-}
-inner class VideoAdapter : BaseAdapter() {
-    override fun getCount(): Int = shown.size
-    override fun getItem(position: Int): Any = shown[position]
-    override fun getItemId(position: Int): Long = shown[position].id
-    override fun hasStableIds(): Boolean = true
+        val title = v.title
+        pool.execute {
+            try {
+                val url = "https://www.youtube.com/results?search_query=" + Uri.encode(title)
+                val conn = URL(url).openConnection() as HttpURLConnection
+                conn.connectTimeout = 10000
+                conn.readTimeout = 10000
+                conn.requestMethod = "GET"
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0")
+                val html = conn.inputStream.bufferedReader().readText()
+                conn.disconnect()
 
-    override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-        val v = shown[position]
-        val ctx = this@MainActivity
-
-        val card = LinearLayout(ctx)
-        card.orientation = LinearLayout.HORIZONTAL
-        card.layoutDirection = View.LAYOUT_DIRECTION_RTL
-        card.setPadding(dp(8), dp(6), dp(8), dp(6))
-        card.background = GradientDrawable().apply {
-            setColor(Color.parseColor("#1A1A1A")); cornerRadius = dp(12).toFloat()
-        }
-        card.layoutParams = LinearLayout.LayoutParams(-1, -2).apply {
-            setMargins(dp(8), dp(4), dp(8), dp(4))
-        }
-
-        val thumb = ImageView(ctx)
-        thumb.scaleType = ImageView.ScaleType.CENTER_CROP
-        thumb.background = GradientDrawable().apply { setColor(Color.parseColor("#2A2A2A")); cornerRadius = dp(8).toFloat() }
-        thumb.clipToOutline = true
-        thumb.outlineProvider = object : ViewOutlineProvider() {
-            override fun getOutline(view: View, outline: Outline) {
-                outline.setRoundRect(0, 0, view.width, view.height, dp(8).toFloat())
+                val videoIdMatch = Regex("\"videoId\":\"([a-zA-Z0-9_-]{11})\"").find(html)
+                if (videoIdMatch == null) {
+                    ui.post { showCommentsError("لم يتم العثور على الفيديو") }
+                    return@execute
+                }
+                val videoId = videoIdMatch.groupValues[1]
+                ui.post { loadRealComments(videoId) }
+            } catch (e: Exception) {
+                ui.post { showCommentsError("تعذّر تحميل التعليقات: ${e.message}") }
             }
         }
-        val thumbLp = LinearLayout.LayoutParams(dp(140), dp(80))
-        thumbLp.marginEnd = dp(10)
-        card.addView(thumb, thumbLp)
-        loadThumb(v, thumb)
-
-        val info = LinearLayout(ctx)
-        info.orientation = LinearLayout.VERTICAL
-        info.gravity = Gravity.CENTER_VERTICAL
-        card.addView(info, LinearLayout.LayoutParams(0, -1, 1f))
-
-        val title = TextView(ctx)
-        title.text = v.title
-        title.setTextColor(Color.WHITE); title.textSize = 14f; title.typeface = fontBold
-        title.maxLines = 2; title.ellipsize = android.text.TextUtils.TruncateAt.END
-        info.addView(title)
-
-        val duration = TextView(ctx)
-        duration.text = fmt(v.duration)
-        duration.setTextColor(gray); duration.textSize = 12f
-        duration.setPadding(0, dp(4), 0, 0)
-        info.addView(duration)
-
-        val progress = prefs.getPosition(v.id)
-        if (progress > 0 && v.duration > 0) {
-            val bar = ProgressBar(ctx, null, android.R.attr.progressBarStyleHorizontal)
-            bar.max = v.duration.toInt()
-            bar.progress = progress.toInt()
-            bar.progressTintList = android.content.res.ColorStateList.valueOf(red)
-            bar.setPadding(0, dp(6), 0, 0)
-            info.addView(bar, LinearLayout.LayoutParams(-1, dp(6)))
-        }
-
-        val menuBtn = ImageButton(ctx)
-        menuBtn.setImageDrawable(IconDrawable(IconDrawable.TRASH, gray))
-        menuBtn.background = null
-        menuBtn.setOnClickListener { buzz(it); showDeleteDialog(v) }
-        card.addView(menuBtn, LinearLayout.LayoutParams(dp(36), dp(36)))
-
-        return card
     }
-}
 
-private fun loadThumb(v: VideoItem, iv: ImageView) {
-    val cached = cache.get(v.id)
-    if (cached != null) { iv.setImageBitmap(cached); return }
-    iv.setImageDrawable(ShimmerView(this).let { shimmer ->
-        GradientDrawable().apply { setColor(Color.parseColor("#2A2A2A")); cornerRadius = dp(8).toFloat() }
-    })
-    pool.execute {
-        val file = File(thumbDir, "${v.id}.jpg")
-        if (file.exists()) {
-            val bmp = BitmapFactory.decodeFile(file.path)
-            if (bmp != null) {
-                cache.put(v.id, bmp)
-                ui.post { if (v.id == iv.tag) iv.setImageBitmap(bmp) }
-                return@execute
-            }
-        }
+    private fun showCommentsError(msg: String) {
+        commentsList.removeAllViews()
+        val tv = TextView(this)
+        tv.text = msg; tv.setTextColor(gray); tv.textSize = 14f
+        tv.setPadding(dp(16), dp(16), dp(16), dp(16))
+        commentsList.addView(tv)
+    }
+
+    private fun loadRealComments(videoId: String) {
         try {
-            val r = MediaMetadataRetriever()
-            r.setDataSource(this@MainActivity, v.uri)
-            val frame = r.getFrameAtTime(1_000_000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-            r.release()
-            if (frame != null) {
-                val scaled = Bitmap.createScaledBitmap(frame, thumbW, thumbH, true)
-                cache.put(v.id, scaled)
-                ui.post { if (v.id == iv.tag) iv.setImageBitmap(scaled) }
-                try {
-                    FileOutputStream(file).use { scaled.compress(Bitmap.CompressFormat.JPEG, 85, it) }
-                } catch (_: Exception) {}
+            if (!ytTab.isInitialized()) return
+            val svc = ServiceList.YouTube
+            val info = org.schabi.newpipe.extractor.stream.StreamInfo.getInfo(svc, "https://www.youtube.com/watch?v=" + videoId)
+            val commentsUrl = info.commentsUrl
+            if (commentsUrl == null || commentsUrl.isEmpty()) {
+                showCommentsError("لا توجد تعليقات")
+                return
+            }
+            val ci = CommentsInfo.getInfo(svc, commentsUrl)
+            val items = ci.relatedItems
+            commentsCount = ci.commentCount
+            commentBadge.text = if (commentsCount > 0) "💬 $commentsCount" else "💬"
+            commentsTitle.text = "التعليقات ($commentsCount)"
+            commentsList.removeAllViews()
+            if (items.isEmpty()) { showCommentsError("لا توجد تعليقات"); return }
+            for (item in items) {
+                addCommentView(item)
+            }
+        } catch (e: Exception) {
+            showCommentsError("تعذّر تحميل التعليقات: ${e.message}")
+        }
+    }
+
+    private fun addCommentView(item: CommentsInfoItem) {
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.VERTICAL
+        row.setPadding(dp(14), dp(8), dp(14), dp(8))
+
+        val author = TextView(this)
+        author.text = item.uploaderName ?: "مجهول"
+        author.setTextColor(red); author.textSize = 13f; author.typeface = fontBold
+        row.addView(author)
+
+        val comment = TextView(this)
+        comment.text = item.commentText?.content ?: ""
+        comment.setTextColor(Color.WHITE); comment.textSize = 13f
+        comment.setPadding(0, dp(4), 0, dp(4))
+        row.addView(comment)
+
+        val likes = TextView(this)
+        likes.text = "👍 ${item.likeCount}"
+        likes.setTextColor(gray); likes.textSize = 11f
+        row.addView(likes)
+
+        commentsList.addView(row)
+
+        val divider = View(this)
+        divider.setBackgroundColor(Color.parseColor("#2A2A2A"))
+        commentsList.addView(divider, LinearLayout.LayoutParams(-1, dp(1)))
+    }
+
+    override fun onPause() {
+        super.onPause()
+        val p = player; val c = current
+        if (p != null && c != null && prepared) saveProgress(p, c)
+        if (p != null && p.isPlaying) p.pause()
+        if (Build.VERSION.SDK_INT >= 26) {
+            try {
+                enterPictureInPictureMode(PictureInPictureParams.Builder()
+                    .setAspectRatio(Rational(16, 9)).build())
+            } catch (_: Exception) {}
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (!firstResume) loadVideos()
+        firstResume = false
+        if (!observerRegistered) {
+            try {
+                contentResolver.registerContentObserver(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true, mediaObserver)
+                observerRegistered = true
+            } catch (_: Exception) {}
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (!isInPictureInPictureMode) {
+            player?.pause()
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        pool.shutdown()
+        mediaObserver.let {
+            try { contentResolver.unregisterContentObserver(it) } catch (_: Exception) {}
+        }
+        player?.release()
+        player = null
+        cache.evictAll()
+    }
+
+    override fun onPictureInPictureModeChanged(isInPip: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPip, newConfig)
+        if (isInPip) {
+            controls.visibility = View.GONE
+            commentsPanel.visibility = View.GONE
+        } else {
+            controls.visibility = View.VISIBLE
+        }
+    }
+
+    private fun treeToPath(uri: Uri): String? {
+        if (Build.VERSION.SDK_INT >= 21 && DocumentsContract.isTreeUri(uri)) {
+            val docId = DocumentsContract.getTreeDocumentId(uri)
+            val parts = docId.split(":")
+            return if (parts.size >= 2) {
+                val type = parts[0]; val path = parts[1]
+                if (type == "primary") Environment.getExternalStorageDirectory().path + "/" + path
+                else "/storage/$type/$path"
+            } else null
+        }
+        return null
+    }
+
+    private fun updateMediaStore(uri: Uri) {
+        try {
+            if (Build.VERSION.SDK_INT >= 29) {
+                val values = ContentValues()
+                values.put(MediaStore.Video.Media.IS_PENDING, 0)
+                contentResolver.update(uri, values, null, null)
             }
         } catch (_: Exception) {}
     }
-    iv.tag = v.id
-}
 
-private fun showDeleteDialog(v: VideoItem) {
-    AlertDialog.Builder(this)
-        .setTitle("حذف الفيديو")
-        .setMessage("هل أنت متأكد من حذف \"${v.title}\"؟")
-        .setPositiveButton("حذف") { _, _ -> deleteVideo(v) }
-        .setNegativeButton("إلغاء", null)
-        .show()
-}
+    inner class VideoAdapter : BaseAdapter() {
+        override fun getCount(): Int = shown.size
+        override fun getItem(position: Int): Any = shown[position]
+        override fun getItemId(position: Int): Long = shown[position].id
+        override fun hasStableIds(): Boolean = true
 
-private fun deleteVideo(v: VideoItem) {
-    pendingDelete = v
-    try {
-        if (Build.VERSION.SDK_INT >= 29) {
-            val deleteRequest = MediaStore.createDeleteRequest(contentResolver, listOf(v.uri))
-            deleteLauncher.launch(IntentSenderRequest.Builder(deleteRequest.intentSender).build())
-            deleteNeedsRetry = false
-        } else {
-            if (contentResolver.delete(v.uri, null, null) > 0) afterDeleted(v)
-            else Toast.makeText(this, "تعذّر الحذف", Toast.LENGTH_SHORT).show()
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+            val v = shown[position]
+            val ctx = this@MainActivity
+
+            val card = LinearLayout(ctx)
+            card.orientation = LinearLayout.HORIZONTAL
+            card.layoutDirection = View.LAYOUT_DIRECTION_RTL
+            card.setPadding(dp(8), dp(6), dp(8), dp(6))
+            card.background = GradientDrawable().apply {
+                setColor(Color.parseColor("#1A1A1A")); cornerRadius = dp(12).toFloat()
+            }
+            card.layoutParams = LinearLayout.LayoutParams(-1, -2).apply {
+                setMargins(dp(8), dp(4), dp(8), dp(4))
+            }
+
+            val thumb = ImageView(ctx)
+            thumb.scaleType = ImageView.ScaleType.CENTER_CROP
+            thumb.background = GradientDrawable().apply { setColor(Color.parseColor("#2A2A2A")); cornerRadius = dp(8).toFloat() }
+            thumb.clipToOutline = true
+            thumb.outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: Outline) {
+                    outline.setRoundRect(0, 0, view.width, view.height, dp(8).toFloat())
+                }
+            }
+            val thumbLp = LinearLayout.LayoutParams(dp(140), dp(80))
+            thumbLp.marginEnd = dp(10)
+            card.addView(thumb, thumbLp)
+            loadThumb(v, thumb)
+
+            val info = LinearLayout(ctx)
+            info.orientation = LinearLayout.VERTICAL
+            info.gravity = Gravity.CENTER_VERTICAL
+            card.addView(info, LinearLayout.LayoutParams(0, -1, 1f))
+
+            val title = TextView(ctx)
+            title.text = v.title
+            title.setTextColor(Color.WHITE); title.textSize = 14f; title.typeface = fontBold
+            title.maxLines = 2; title.ellipsize = android.text.TextUtils.TruncateAt.END
+            info.addView(title)
+
+            val duration = TextView(ctx)
+            duration.text = fmt(v.duration)
+            duration.setTextColor(gray); duration.textSize = 12f
+            duration.setPadding(0, dp(4), 0, 0)
+            info.addView(duration)
+
+            val progress = prefs.getPosition(v.id)
+            if (progress > 0 && v.duration > 0) {
+                val bar = ProgressBar(ctx, null, android.R.attr.progressBarStyleHorizontal)
+                bar.max = v.duration.toInt()
+                bar.progress = progress.toInt()
+                bar.progressTintList = android.content.res.ColorStateList.valueOf(red)
+                bar.setPadding(0, dp(6), 0, 0)
+                info.addView(bar, LinearLayout.LayoutParams(-1, dp(6)))
+            }
+
+            val menuBtn = ImageButton(ctx)
+            menuBtn.setImageDrawable(IconDrawable(IconDrawable.TRASH, gray))
+            menuBtn.background = null
+            menuBtn.setOnClickListener { buzz(it); showDeleteDialog(v) }
+            card.addView(menuBtn, LinearLayout.LayoutParams(dp(36), dp(36)))
+
+            return card
         }
-    } catch (e: RecoverableSecurityException) {
-        deleteNeedsRetry = true
+    }
+
+    private fun loadThumb(v: VideoItem, iv: ImageView) {
+        val cached = cache.get(v.id)
+        if (cached != null) { iv.setImageBitmap(cached); return }
+        iv.setImageDrawable(GradientDrawable().apply { setColor(Color.parseColor("#2A2A2A")); cornerRadius = dp(8).toFloat() })
+        pool.execute {
+            val file = File(thumbDir, "${v.id}.jpg")
+            if (file.exists()) {
+                val bmp = BitmapFactory.decodeFile(file.path)
+                if (bmp != null) {
+                    cache.put(v.id, bmp)
+                    ui.post { if (v.id == iv.tag) iv.setImageBitmap(bmp) }
+                    return@execute
+                }
+            }
+            try {
+                val r = MediaMetadataRetriever()
+                r.setDataSource(this@MainActivity, v.uri)
+                val frame = r.getFrameAtTime(1_000_000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                r.release()
+                if (frame != null) {
+                    val scaled = Bitmap.createScaledBitmap(frame, thumbW, thumbH, true)
+                    cache.put(v.id, scaled)
+                    ui.post { if (v.id == iv.tag) iv.setImageBitmap(scaled) }
+                    try {
+                        FileOutputStream(file).use { scaled.compress(Bitmap.CompressFormat.JPEG, 85, it) }
+                    } catch (_: Exception) {}
+                }
+            } catch (_: Exception) {}
+        }
+        iv.tag = v.id
+    }
+
+    private fun showDeleteDialog(v: VideoItem) {
+        AlertDialog.Builder(this)
+            .setTitle("حذف الفيديو")
+            .setMessage("هل أنت متأكد من حذف \"${v.title}\"؟")
+            .setPositiveButton("حذف") { _, _ -> deleteVideo(v) }
+            .setNegativeButton("إلغاء", null)
+            .show()
+    }
+
+    private fun deleteVideo(v: VideoItem) {
+        pendingDelete = v
         try {
-            deleteLauncher.launch(IntentSenderRequest.Builder(e.userAction.actionIntent.intentSender).build())
+            if (Build.VERSION.SDK_INT >= 29) {
+                val deleteRequest = MediaStore.createDeleteRequest(contentResolver, listOf(v.uri))
+                deleteLauncher.launch(IntentSenderRequest.Builder(deleteRequest.intentSender).build())
+                deleteNeedsRetry = false
+            } else {
+                if (contentResolver.delete(v.uri, null, null) > 0) afterDeleted(v)
+                else Toast.makeText(this, "تعذّر الحذف", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: RecoverableSecurityException) {
+            deleteNeedsRetry = true
+            try {
+                deleteLauncher.launch(IntentSenderRequest.Builder(e.userAction.actionIntent.intentSender).build())
+            } catch (_: Exception) {
+                Toast.makeText(this, "تعذّر الحذف", Toast.LENGTH_SHORT).show()
+            }
         } catch (_: Exception) {
             Toast.makeText(this, "تعذّر الحذف", Toast.LENGTH_SHORT).show()
         }
-    } catch (_: Exception) {
-        Toast.makeText(this, "تعذّر الحذف", Toast.LENGTH_SHORT).show()
     }
-}
+
     class Prefs(context: Context) {
         private val sp: SharedPreferences = context.getSharedPreferences("tube_pro", Context.MODE_PRIVATE)
 
