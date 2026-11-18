@@ -97,7 +97,6 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
-import java.io.OutputStream
 import java.io.RandomAccessFile
 import java.net.HttpURLConnection
 import java.net.URL
@@ -2006,4 +2005,6 @@ class YoutubeTab(
         view.addView(web, FrameLayout.LayoutParams(-1, -1))
 
         bar.max = 100; bar.visibility = View.GONE
-        view.addView(bar, FrameLayout.LayoutParams(-1, dp(4),
+        view.addView(bar, FrameLayout.LayoutParams(-1, dp(4), Gravity.TOP))
+
+        stat
