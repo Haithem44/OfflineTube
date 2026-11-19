@@ -94,6 +94,8 @@ import java.net.URL
 import java.util.Locale
 import java.util.concurrent.Executors
 import java.io.IOException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.nio.ByteBuffer
 import android.media.MediaCodec
 import android.media.MediaExtractor
@@ -504,6 +506,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var dlBadge: TextView
     private val dlRows = HashMap<Int, DlRow>()
     private val notifiedDone = HashSet<Int>()
+    private val refreshViews = ArrayList<View>()
+    private var spinAnim: ValueAnimator? = null
 
     private class DlRow(val root: LinearLayout, val title: TextView, val bar: ProgressBar, val status: TextView, val action: TextView) {
         var lastBytes = 0L; var lastTime = 0L; var speed = 0L
@@ -907,6 +911,7 @@ class MainActivity : AppCompatActivity() {
         refreshBtn.background = null
         refreshBtn.setOnClickListener { buzz(it); reloadVideos() }
         logo.addView(refreshBtn, LinearLayout.LayoutParams(dp(40), dp(40)))
+        refreshViews.add(refreshBtn)
 
         val folderBtn = ImageButton(this)
         folderBtn.setImageDrawable(IconDrawable(IconDrawable.FOLDER, navInactive))
@@ -1024,10 +1029,19 @@ class MainActivity : AppCompatActivity() {
             col.gravity = Gravity.CENTER
             col.setPadding(0, dp(8), 0, dp(6))
 
-            val icon = IconDrawable(item.second, if (i == 0) navActive else navInactive)
+            val isRefresh = i == 4
+            val icon = IconDrawable(item.second, if (isRefresh) Color.WHITE else if (i == 0) navActive else navInactive)
             val iv = ImageView(this)
             iv.setImageDrawable(icon)
-            col.addView(iv, LinearLayout.LayoutParams(dp(24), dp(24)))
+            if (isRefresh) {
+                iv.background = GradientDrawable().apply { setColor(red); shape = GradientDrawable.OVAL }
+                iv.setPadding(dp(6), dp(6), dp(6), dp(6))
+                iv.elevation = dp(3).toFloat()
+                col.addView(iv, LinearLayout.LayoutParams(dp(32), dp(32)))
+                refreshViews.add(iv)
+            } else {
+                col.addView(iv, LinearLayout.LayoutParams(dp(24), dp(24)))
+            }
 
             val tv = TextView(this)
             tv.text = item.first; tv.textSize = 11f
@@ -1035,7 +1049,7 @@ class MainActivity : AppCompatActivity() {
             col.addView(tv)
 
             col.setOnClickListener { buzz(it); handleNav(i) }
-            navRefs.add(NavRef(i, icon, tv))
+            if (!isRefresh) navRefs.add(NavRef(i, icon, tv))
             nav.addView(col, LinearLayout.LayoutParams(0, -1, 1f))
         }
         return nav
@@ -1099,11 +1113,56 @@ class MainActivity : AppCompatActivity() {
         continueHeader.addView(title)
     }
 
-    private fun reloadVideos() {
+    private fun setSpinning(on: Boolean) {
+        spinAnim?.cancel(); spinAnim = null
+        refreshViews.forEach { it.rotation = 0f }
+        if (!on) return
+        spinAnim = ValueAnimator.ofFloat(0f, 360f).apply {
+            duration = 800; repeatCount = ValueAnimator.INFINITE; interpolator = LinearInterpolator()
+            addUpdateListener { a -> val r = a.animatedValue as Float; refreshViews.forEach { v -> v.rotation = r } }
+            start()
+        }
+    }
+
+    /** يفحص المجلدات ليُدخل أي فيديوهات جديدة في مكتبة الجهاز قبل قراءة القائمة */
+    private fun scanMediaFolders() {
+        try {
+            val dirs = ArrayList<File>()
+            if (folderPath.isNotEmpty()) dirs.add(File(folderPath))
+            val movies = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
+            dirs.add(movies)
+            dirs.add(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS))
+            val exts = setOf("mp4", "mkv", "webm", "3gp", "mov", "avi", "m4v")
+            val files = ArrayList<String>()
+            for (d in dirs.distinct()) {
+                d.walkTopDown().maxDepth(3)
+                    .filter { it.isFile && it.extension.lowercase() in exts }
+                    .forEach { if (files.size < 300) files.add(it.path) }
+            }
+            if (files.isEmpty()) return
+            val latch = CountDownLatch(files.size)
+            MediaScannerConnection.scanFile(this, files.toTypedArray(), null) { _, _ -> latch.countDown() }
+            latch.await(4, TimeUnit.SECONDS)
+        } catch (_: Exception) {}
+    }
+
+    private fun reloadVideos(manual: Boolean = true) {
+        if (tab == YT_TAB && manual) {
+            ytTab.reload()
+            Toast.makeText(this, "تم تحديث صفحة YouTube", Toast.LENGTH_SHORT).show()
+            return
+        }
         if (refreshing) return
         refreshing = true
         refreshBar.visibility = View.VISIBLE
-        loadVideos()
+        setSpinning(true)
+        val started = System.currentTimeMillis()
+        pool.execute {
+            scanMediaFolders()
+            val wait = 700L - (System.currentTimeMillis() - started)
+            if (wait > 0) { try { Thread.sleep(wait) } catch (_: Exception) {} }
+            ui.post { loadVideos() }
+        }
     }
 
     private fun afterDeleted(v: VideoItem) {
@@ -1164,6 +1223,8 @@ class MainActivity : AppCompatActivity() {
                 if (refreshing) {
                     refreshing = false
                     refreshBar.visibility = View.GONE
+                    setSpinning(false)
+                    Toast.makeText(this@MainActivity, "تم التحديث ✓  (" + all.size + " فيديو)", Toast.LENGTH_SHORT).show()
                 }
                 restorePendingPlayer()
             }
@@ -1709,7 +1770,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         if (!firstResume) {
-            if (playerRoot.visibility == View.VISIBLE) loadVideos() else reloadVideos()
+            if (playerRoot.visibility == View.VISIBLE) loadVideos() else reloadVideos(false)
         }
         firstResume = false
         if (!observerRegistered) {
@@ -2170,6 +2231,8 @@ class YoutubeTab(
     }
 
     fun isInitialized(): Boolean = initialized
+
+    fun reload() { web?.reload() }
 
     fun onShown() {
         if (!initialized) {
