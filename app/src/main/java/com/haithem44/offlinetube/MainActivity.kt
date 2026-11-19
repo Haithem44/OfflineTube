@@ -94,6 +94,11 @@ import java.net.URL
 import java.util.Locale
 import java.util.concurrent.Executors
 import java.io.IOException
+import org.schabi.newpipe.extractor.NewPipe
+import org.schabi.newpipe.extractor.downloader.Downloader
+import org.schabi.newpipe.extractor.downloader.Request
+import org.schabi.newpipe.extractor.downloader.Response
+import org.schabi.newpipe.extractor.exceptions.ReCaptchaException
 import java.io.RandomAccessFile
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
@@ -169,6 +174,37 @@ class IconDrawable(private val kind: Int, initial: Int) : Drawable() {
     override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter; invalidateSelf() }
     @Suppress("DEPRECATION")
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+}
+
+/** Downloader مطلوب لتهيئة NewPipe قبل أي استخراج (جلب الجودات والتعليقات). */
+class SimpleDownloader : Downloader() {
+    override fun execute(request: Request): Response {
+        val conn = URL(request.url()).openConnection() as HttpURLConnection
+        try {
+            conn.connectTimeout = 20000
+            conn.readTimeout = 20000
+            conn.requestMethod = request.httpMethod()
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; rv:128.0) Gecko/20100101 Firefox/128.0")
+            for ((k, values) in request.headers()) {
+                if (k.equals("Accept-Encoding", true)) continue
+                conn.setRequestProperty(k, values.joinToString(", "))
+            }
+            val data = request.dataToSend()
+            if (data != null) {
+                conn.doOutput = true
+                conn.outputStream.use { it.write(data) }
+            }
+            val code = conn.responseCode
+            if (code == 429) throw ReCaptchaException("reCaptcha Challenge requested", request.url())
+            val stream = if (code >= 400) conn.errorStream else conn.inputStream
+            val body = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+            val headers = HashMap<String, List<String>>()
+            for ((k, v) in conn.headerFields) { if (k != null) headers[k] = v }
+            return Response(code, conn.responseMessage, headers, body, conn.url.toString())
+        } finally {
+            conn.disconnect()
+        }
+    }
 }
 
 class DownloadTask(val id: Int, val title: String, val url: String, val fileName: String) {
@@ -595,6 +631,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         prefs = Prefs(this)
         DownloadCenter.init(this)
+        try { NewPipe.init(SimpleDownloader()) } catch (_: Exception) {}
         folderPath = prefs.folderPath
         tab = savedInstanceState?.getInt("tab") ?: prefs.lastTab
         query = savedInstanceState?.getString("query") ?: ""
