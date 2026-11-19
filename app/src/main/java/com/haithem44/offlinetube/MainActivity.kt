@@ -32,12 +32,7 @@ import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
 import android.media.AudioManager
-import android.media.MediaCodec
-import android.media.MediaExtractor
-import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
-import android.media.MediaMuxer
-import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -46,12 +41,10 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.DocumentsContract
 import android.provider.MediaStore
-import android.provider.Settings
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.LruCache
 import android.util.Rational
-import android.util.Size
 import android.view.GestureDetector
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
@@ -77,7 +70,6 @@ import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ListView
-import android.widget.PopupMenu
 import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.SeekBar
@@ -93,56 +85,18 @@ import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
-import org.json.JSONObject
-import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.comments.CommentsInfo
 import org.schabi.newpipe.extractor.comments.CommentsInfoItem
-import org.schabi.newpipe.extractor.downloader.Downloader
-import org.schabi.newpipe.extractor.downloader.Request
-import org.schabi.newpipe.extractor.downloader.Response
-import org.schabi.newpipe.extractor.MediaFormat as NpFormat
-import org.schabi.newpipe.extractor.stream.AudioStream
 import org.schabi.newpipe.extractor.stream.StreamInfo
-import org.schabi.newpipe.extractor.stream.VideoStream
 import java.io.File
 import java.io.FileOutputStream
-import java.io.IOException
-import java.io.OutputStream
-import java.io.RandomAccessFile
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicLong
-import java.util.concurrent.atomic.AtomicReference
 
 data class VideoItem(val id: Long, val title: String, val duration: Long, val uri: Uri)
-
-private data class RowState(
-    val status: String,
-    val pct: Int,
-    val action: String,
-    val color: String,
-    val clickable: Boolean
-)
-
-data class DownloadRecord(
-    val vid: String,
-    val url: String,
-    val title: String,
-    val height: Int,
-    val videoUrl: String,
-    val audioUrl: String?,
-    val totalSize: Long,
-    val videoSize: Long,
-    val audioSize: Long,
-    val durationMs: Long
-)
 
 class IconDrawable(private val kind: Int, initial: Int) : Drawable() {
     companion object {
@@ -251,7 +205,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var ytTab: YoutubeTab
     private lateinit var ytPanel: FrameLayout
     private val YT_TAB = 5
-    private var hasBanner = false
     private var tab = 0
     private var query = ""
 
@@ -266,7 +219,6 @@ class MainActivity : AppCompatActivity() {
     private var deleteNeedsRetry = false
     private var pendingOpenId: Long = -1L
     private var pendingRestoreComments = false
-    private var pendingFullscreen = false
     private var observerRegistered = false
 
     private val tabNames = arrayOf("الصفحة الرئيسية", "تابع المشاهدة", "الأطول", "تمت المشاهدة", "Shorts", "YouTube")
@@ -275,7 +227,6 @@ class MainActivity : AppCompatActivity() {
 
     private class NavRef(val tabIdx: Int, val icon: IconDrawable, val label: TextView)
     private val navRefs = ArrayList<NavRef>()
-    private val animatedIds = HashSet<Long>()
 
     private val pool = Executors.newFixedThreadPool(3)
     private val ui = Handler(Looper.getMainLooper())
@@ -338,7 +289,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var gestureOverlay: View
     private var commentsOpen = false
     private var commentsCount = 0
-    private var savedResize = AspectRatioFrameLayout.RESIZE_MODE_FIT
     private lateinit var gestures: GestureDetector
     private val pauseDrawable = IconDrawable(IconDrawable.PAUSE, Color.WHITE)
     private val playDrawable = IconDrawable(IconDrawable.PLAY_FILLED, Color.WHITE)
@@ -346,10 +296,8 @@ class MainActivity : AppCompatActivity() {
     private var player: ExoPlayer? = null
     private var prepared = false
     private var current: VideoItem? = null
-    private var pending: VideoItem? = null
     private var videoW = 0
     private var videoH = 0
-    private var isLandscape = false
     private var userSeeking = false
     private var lastSaveTime = 0L
     private var locked = false
@@ -357,7 +305,6 @@ class MainActivity : AppCompatActivity() {
     private val speeds = floatArrayOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
     private var speedIdx = 2
     private var gestureMode = 0
-    private var gestureValue = 0f
     private val audio by lazy { getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     private val hideHud = Runnable { hudText.visibility = View.GONE }
     private val hideUnlock = Runnable { if (locked) unlockBtn.visibility = View.GONE }
@@ -435,7 +382,6 @@ class MainActivity : AppCompatActivity() {
         query = savedInstanceState?.getString("query") ?: ""
         pendingOpenId = savedInstanceState?.let { if (it.getBoolean("player_open")) it.getLong("current_id", -1L) else -1L } ?: -1L
         pendingRestoreComments = savedInstanceState?.getBoolean("comments_open") == true
-        pendingFullscreen = savedInstanceState?.getBoolean("fullscreen") == true
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -557,7 +503,7 @@ class MainActivity : AppCompatActivity() {
             if (p != null && prepared) saveProgress(p, c)
         }
     }
-    
+
     private fun addSplash() {
         val splash = LinearLayout(this)
         splash.orientation = LinearLayout.VERTICAL
@@ -599,35 +545,11 @@ class MainActivity : AppCompatActivity() {
         v.background = d; v.setPadding(l, t, r, b)
     }
 
-    private fun make3D(v: View, top: Int = Color.parseColor("#3A3A3A"), bottom: Int = Color.parseColor("#1C1C1C"), radius: Int = 14) {
-        val normal = raised(top, bottom, radius)
-        val down = raised(top, bottom, radius, true)
-        setBgKeepPad(v, normal); v.elevation = dp(6).toFloat()
-        v.setOnTouchListener { view, e ->
-            when (e.action) {
-                MotionEvent.ACTION_DOWN -> { setBgKeepPad(view, down); view.animate().scaleX(0.96f).scaleY(0.96f).setDuration(80).start(); buzz(view) }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    setBgKeepPad(view, normal); view.animate().scaleX(1f).scaleY(1f).setDuration(100).start()
-                }
-            }
-            false
-        }
-    }
-
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     private fun fmt(ms: Long): String {
         val s = ms / 1000; val h = s / 3600; val m = (s % 3600) / 60; val sec = s % 60
         return if (h > 0) String.format(Locale.US, "%d:%02d:%02d", h, m, sec) else String.format(Locale.US, "%02d:%02d", m, sec)
-    }
-
-    private fun humanSize(b: Long): String {
-        return when {
-            b >= 1_073_741_824 -> String.format(Locale.US, "%.1f GB", b / 1_073_741_824.0)
-            b >= 1_048_576 -> String.format(Locale.US, "%.0f MB", b / 1_048_576.0)
-            b >= 1024 -> String.format(Locale.US, "%.0f KB", b / 1024.0)
-            else -> "$b B"
-        }
     }
 
     private fun buildTopBlock(): View {
@@ -877,11 +799,9 @@ class MainActivity : AppCompatActivity() {
                     MediaStore.Video.Media.EXTERNAL_CONTENT_URI
                 }
                 val proj = arrayOf(MediaStore.Video.Media._ID, MediaStore.Video.Media.TITLE, MediaStore.Video.Media.DURATION)
-                val sel: String? = null
-                val selArgs: Array<String>? = null
                 val sort = MediaStore.Video.Media.DATE_ADDED + " DESC"
 
-                contentResolver.query(collection, proj, sel, selArgs, sort)?.use { c ->
+                contentResolver.query(collection, proj, null, null, sort)?.use { c ->
                     val idIdx = c.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
                     val tIdx = c.getColumnIndexOrThrow(MediaStore.Video.Media.TITLE)
                     val dIdx = c.getColumnIndexOrThrow(MediaStore.Video.Media.DURATION)
@@ -1343,15 +1263,15 @@ class MainActivity : AppCompatActivity() {
         try {
             if (!ytTab.isInitialized()) return
             val svc = ServiceList.YouTube
-            val info = org.schabi.newpipe.extractor.stream.StreamInfo.getInfo(svc, "https://www.youtube.com/watch?v=" + videoId)
-            val commentsUrl = info.commentsUrl
-            if (commentsUrl == null || commentsUrl.isEmpty()) {
-                showCommentsError("لا توجد تعليقات")
-                return
-            }
-            val ci = CommentsInfo.getInfo(svc, commentsUrl)
+            val videoUrl = "https://www.youtube.com/watch?v=$videoId"
+            
+            // تصحيح: استخدام رابط الفيديو مباشرة بدلاً من commentsUrl
+            val ci = CommentsInfo.getInfo(svc, videoUrl)
             val items = ci.relatedItems
-            commentsCount = ci.commentCount
+            
+            // تصحيح: استخدام commentsCount بدلاً من commentCount
+            commentsCount = ci.commentsCount
+            
             commentBadge.text = if (commentsCount > 0) "💬 $commentsCount" else "💬"
             commentsTitle.text = "التعليقات ($commentsCount)"
             commentsList.removeAllViews()
@@ -1456,16 +1376,6 @@ class MainActivity : AppCompatActivity() {
             } else null
         }
         return null
-    }
-
-    private fun updateMediaStore(uri: Uri) {
-        try {
-            if (Build.VERSION.SDK_INT >= 29) {
-                val values = ContentValues()
-                values.put(MediaStore.Video.Media.IS_PENDING, 0)
-                contentResolver.update(uri, values, null, null)
-            }
-        } catch (_: Exception) {}
     }
 
     inner class VideoAdapter : BaseAdapter() {
