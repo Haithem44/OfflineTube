@@ -528,13 +528,25 @@ class MainActivity : AppCompatActivity() {
     private val navRefs = ArrayList<NavRef>()
 
     private val pool = Executors.newFixedThreadPool(3)
+    // خيوط مستقلة للصور المصغّرة حتى لا تؤخّر التحديث
+    private val thumbPool = Executors.newFixedThreadPool(2)
     private val ui = Handler(Looper.getMainLooper())
 
+    private var loadGen = 0
+    private var loadedOnce = false
+    private var refreshManual = true
+    // الصور المنتظَرة لكل فيديو (تُستخدم من الخيط الرئيسي فقط) لمنع تكرار العمل
+    private val thumbWaiters = HashMap<Long, MutableList<ImageView>>()
+
+    private val observerReload = Runnable {
+        if (!refreshing && playerRoot.visibility != View.VISIBLE) loadVideos()
+    }
+
+    // MediaStore يرسل عشرات التنبيهات أثناء الفحص، فنجمعها في تحميل واحد
     private val mediaObserver = object : ContentObserver(ui) {
         override fun onChange(selfChange: Boolean) {
-            if (playerRoot.visibility != View.VISIBLE) {
-                loadVideos()
-            }
+            ui.removeCallbacks(observerReload)
+            ui.postDelayed(observerReload, 1000)
         }
     }
 
@@ -544,7 +556,10 @@ class MainActivity : AppCompatActivity() {
 
     private val thumbW: Int by lazy { maxOf(resources.displayMetrics.widthPixels, 1080).coerceAtMost(2160) }
     private val thumbH: Int by lazy { thumbW * 9 / 16 }
-    private val thumbDir: File by lazy { File(cacheDir, "thumbs_hq_v2").apply { mkdirs() } }
+    private val thumbDir: File by lazy {
+        try { File(cacheDir, "thumbs_hq_v2").deleteRecursively() } catch (_: Exception) {}
+        File(cacheDir, "thumbs_hq_v3").apply { mkdirs() }
+    }
 
     private fun loadFont(name: String): Typeface? {
         if (Build.VERSION.SDK_INT < 26) return null
@@ -1124,19 +1139,31 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** يفحص المجلدات ليُدخل أي فيديوهات جديدة في مكتبة الجهاز قبل قراءة القائمة */
+    /** يُدخل في مكتبة الجهاز الفيديوهات الجديدة فقط (غير المفهرسة) داخل المجلد المختار */
+    @Suppress("DEPRECATION")
     private fun scanMediaFolders() {
         try {
-            val dirs = ArrayList<File>()
-            if (folderPath.isNotEmpty()) dirs.add(File(folderPath))
-            val movies = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
-            dirs.add(movies)
-            dirs.add(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS))
             val exts = setOf("mp4", "mkv", "webm", "3gp", "mov", "avi", "m4v")
+            val dirs = ArrayList<File>()
+            val depth: Int
+            if (folderPath.isNotEmpty()) {
+                dirs.add(File(folderPath))
+                depth = if (includeSubfolders) 3 else 1
+            } else {
+                dirs.add(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES))
+                dirs.add(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS))
+                depth = 3
+            }
+            val indexed = HashSet<String>()
+            val (sel, args) = folderSelection()
+            contentResolver.query(videoCollection(), arrayOf(MediaStore.Video.Media.DATA), sel, args, null)?.use { c ->
+                val i = c.getColumnIndexOrThrow(MediaStore.Video.Media.DATA)
+                while (c.moveToNext()) c.getString(i)?.let { indexed.add(it) }
+            }
             val files = ArrayList<String>()
             for (d in dirs.distinct()) {
-                d.walkTopDown().maxDepth(3)
-                    .filter { it.isFile && it.extension.lowercase() in exts }
+                d.walkTopDown().maxDepth(depth)
+                    .filter { it.isFile && it.extension.lowercase() in exts && it.path !in indexed }
                     .forEach { if (files.size < 300) files.add(it.path) }
             }
             if (files.isEmpty()) return
@@ -1154,13 +1181,18 @@ class MainActivity : AppCompatActivity() {
         }
         if (refreshing) return
         refreshing = true
-        refreshBar.visibility = View.VISIBLE
-        setSpinning(true)
+        refreshManual = manual
+        if (manual) {
+            refreshBar.visibility = View.VISIBLE
+            setSpinning(true)
+        }
         val started = System.currentTimeMillis()
         pool.execute {
             scanMediaFolders()
-            val wait = 700L - (System.currentTimeMillis() - started)
-            if (wait > 0) { try { Thread.sleep(wait) } catch (_: Exception) {} }
+            if (manual) {
+                val wait = 700L - (System.currentTimeMillis() - started)
+                if (wait > 0) { try { Thread.sleep(wait) } catch (_: Exception) {} }
+            }
             ui.post { loadVideos() }
         }
     }
@@ -1212,7 +1244,12 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun videoCollection(): Uri =
+        if (Build.VERSION.SDK_INT >= 29) MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+        else MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+
     private fun loadVideos() {
+        val gen = ++loadGen
         pool.execute {
             val result = ArrayList<VideoItem>()
             try {
@@ -1239,13 +1276,19 @@ class MainActivity : AppCompatActivity() {
                 }
             } catch (_: Exception) {}
             ui.post {
-                all.clear(); all.addAll(result)
-                applyFilter()
+                // نتيجة قديمة سبقتها نتيجة أحدث: نتجاهلها
+                if (gen != loadGen) return@post
+                // لا نعيد بناء القائمة إن لم يتغير شيء (يمنع الوميض وإعادة تحميل الصور)
+                if (!loadedOnce || result != all) {
+                    all.clear(); all.addAll(result)
+                    loadedOnce = true
+                    applyFilter()
+                }
                 if (refreshing) {
                     refreshing = false
                     refreshBar.visibility = View.GONE
                     setSpinning(false)
-                    Toast.makeText(this@MainActivity, "تم التحديث ✓  (" + all.size + " فيديو)", Toast.LENGTH_SHORT).show()
+                    if (refreshManual) Toast.makeText(this@MainActivity, "تم التحديث ✓  (" + all.size + " فيديو)", Toast.LENGTH_SHORT).show()
                 }
                 restorePendingPlayer()
             }
@@ -1813,6 +1856,8 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
         ui.removeCallbacks(dlTicker)
         pool.shutdown()
+        thumbPool.shutdown()
+        ui.removeCallbacks(observerReload)
         try { contentResolver.unregisterContentObserver(mediaObserver) } catch (_: Exception) {}
         player?.release()
         player = null
@@ -2147,31 +2192,51 @@ class MainActivity : AppCompatActivity() {
         val cached = cache.get(v.id)
         if (cached != null) { iv.setImageBitmap(cached); return }
         iv.setImageDrawable(GradientDrawable().apply { setColor(Color.parseColor("#2A2A2A")); cornerRadius = dp(8).toFloat() })
-        pool.execute {
-            val file = File(thumbDir, "${v.id}.jpg")
-            if (file.exists()) {
-                val bmp = BitmapFactory.decodeFile(file.path)
+
+        // إن كان هناك تحميل جارٍ لنفس الفيديو ننتظره بدل تكراره
+        val waiting = thumbWaiters[v.id]
+        if (waiting != null) { waiting.add(iv); return }
+        thumbWaiters[v.id] = mutableListOf(iv)
+
+        thumbPool.execute {
+            val bmp = try { makeThumb(v) } catch (_: Exception) { null }
+            ui.post {
+                val views = thumbWaiters.remove(v.id)
                 if (bmp != null) {
                     cache.put(v.id, bmp)
-                    ui.post { if (iv.tag == v.id) iv.setImageBitmap(bmp) }
-                    return@execute
+                    views?.forEach { if (it.tag == v.id) it.setImageBitmap(bmp) }
                 }
             }
-            try {
-                val r = MediaMetadataRetriever()
-                r.setDataSource(this@MainActivity, v.uri)
-                val frame = r.getFrameAtTime(1_000_000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                r.release()
-                if (frame != null) {
-                    val scaled = Bitmap.createScaledBitmap(frame, thumbW, thumbH, true)
-                    cache.put(v.id, scaled)
-                    ui.post { if (iv.tag == v.id) iv.setImageBitmap(scaled) }
-                    try {
-                        FileOutputStream(file).use { scaled.compress(Bitmap.CompressFormat.JPEG, 85, it) }
-                    } catch (_: Exception) {}
-                }
-            } catch (_: Exception) {}
         }
+    }
+
+    private fun makeThumb(v: VideoItem): Bitmap? {
+        val file = File(thumbDir, "${v.id}.jpg")
+        if (file.exists()) {
+            val bmp = BitmapFactory.decodeFile(file.path)
+            if (bmp != null) return bmp
+            file.delete()
+        }
+        var frame: Bitmap? = null
+        val r = MediaMetadataRetriever()
+        try {
+            r.setDataSource(this, v.uri)
+            frame = r.getFrameAtTime(1_000_000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                ?: r.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                ?: r.getFrameAtTime()
+        } catch (_: Exception) {
+        } finally {
+            try { r.release() } catch (_: Exception) {}
+        }
+        if (frame == null) return null
+        val scaled = Bitmap.createScaledBitmap(frame, thumbW, thumbH, true)
+        // كتابة ذرّية: ملف مؤقت ثم إعادة تسمية، فلا يُقرأ ملف ناقص أبدًا
+        val tmp = File(thumbDir, "${v.id}_${System.nanoTime()}.tmp")
+        try {
+            FileOutputStream(tmp).use { scaled.compress(Bitmap.CompressFormat.JPEG, 85, it) }
+            if (!tmp.renameTo(file)) tmp.delete()
+        } catch (_: Exception) { tmp.delete() }
+        return scaled
     }
 
     private fun showDeleteDialog(v: VideoItem) {
