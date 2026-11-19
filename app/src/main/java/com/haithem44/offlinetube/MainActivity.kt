@@ -485,6 +485,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var refreshBar: TextView
     @Volatile private var refreshing = false
+    @Volatile private var shuffleVideos = false
     private var touchStartY = 0f
     private var pulling = false
     private var firstResume = true
@@ -1110,7 +1111,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setSpinning(on: Boolean) {
-        // إيقاف أي أنيميشن سابق وإرجاع كل الأيقونات لوضعها الطبيعي
         try { spinAnim?.cancel() } catch (_: Exception) {}
         spinAnim = null
         refreshViews.forEach {
@@ -1129,7 +1129,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** يفحص المجلدات ليُدخل أي فيديوهات جديدة في مكتبة الجهاز قبل قراءة القائمة */
     private fun scanMediaFolders() {
         try {
             val dirs = ArrayList<File>()
@@ -1152,11 +1151,6 @@ class MainActivity : AppCompatActivity() {
         } catch (_: Exception) {}
     }
 
-    /**
-     * إصلاح زر التحديث:
-     * - إذا كان هناك تحديث جارٍ، يُلغى ويُعاد بدءه (بدل تجاهل الضغط).
-     * - try/catch/finally يضمن عدم بقاء refreshing عالقاً على true.
-     */
     private fun reloadVideos(manual: Boolean = true) {
         if (tab == YT_TAB && manual) {
             ytTab.reload()
@@ -1164,7 +1158,6 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // إذا كان هناك تحديث جارٍ: أعد الضبط وابدأ من جديد (بدل تجاهل الضغط)
         if (refreshing) {
             refreshing = false
             refreshBar.visibility = View.GONE
@@ -1172,6 +1165,9 @@ class MainActivity : AppCompatActivity() {
         }
 
         refreshing = true
+        if (manual) {
+            shuffleVideos = true
+        }
         refreshBar.visibility = View.VISIBLE
         setSpinning(true)
         val started = System.currentTimeMillis()
@@ -1220,10 +1216,6 @@ class MainActivity : AppCompatActivity() {
         if (requestCode == 100) loadVideos()
     }
 
-    /**
-     * إصلاح رئيسي: try/catch/finally يضمن إنهاء حالة "التحديث الجاري"
-     * حتى لو فشل جلب الفيديوهات أو تحديث القائمة.
-     */
     private fun loadVideos() {
         pool.execute {
             try {
@@ -1253,8 +1245,16 @@ class MainActivity : AppCompatActivity() {
 
                 ui.post {
                     try {
-                        all.clear(); all.addAll(result)
+                        all.clear()
+                        all.addAll(result)
+                        
+                        if (shuffleVideos) {
+                            all.shuffle()
+                            shuffleVideos = false
+                        }
+                        
                         applyFilter()
+                        listView.setSelection(0)
                     } finally {
                         if (refreshing) {
                             refreshing = false
