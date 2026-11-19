@@ -503,6 +503,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var dlEmpty: TextView
     private lateinit var dlBadge: TextView
     private val dlRows = HashMap<Int, DlRow>()
+    private val notifiedDone = HashSet<Int>()
 
     private class DlRow(val root: LinearLayout, val title: TextView, val bar: ProgressBar, val status: TextView, val action: TextView) {
         var lastBytes = 0L; var lastTime = 0L; var speed = 0L
@@ -1014,7 +1015,8 @@ class MainActivity : AppCompatActivity() {
             "الرئيسية" to IconDrawable.HOME,
             "بحث" to IconDrawable.SEARCH,
             "المجلد" to IconDrawable.FOLDER,
-            "YouTube" to IconDrawable.PLAY
+            "YouTube" to IconDrawable.PLAY,
+            "تحديث" to IconDrawable.REFRESH
         )
         for ((i, item) in items.withIndex()) {
             val col = LinearLayout(this)
@@ -1040,6 +1042,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleNav(i: Int) {
+        if (i == 4) { reloadVideos(); return }
         when (i) {
             0 -> selectTab(0)
             1 -> {
@@ -1705,7 +1708,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (!firstResume) loadVideos()
+        if (!firstResume) {
+            if (playerRoot.visibility == View.VISIBLE) loadVideos() else reloadVideos()
+        }
         firstResume = false
         if (!observerRegistered) {
             try {
@@ -1958,6 +1963,7 @@ class MainActivity : AppCompatActivity() {
     private fun refreshDownloads() {
         val tasks = DownloadCenter.tasks
         val active = tasks.count { it.isActive }
+        for (t in tasks) { if (t.state == DownloadTask.DONE && notifiedDone.add(t.id)) loadVideos() }
         dlBadge.visibility = if (active > 0) View.VISIBLE else View.GONE
         dlBadge.text = active.toString()
         if (dlPanel.visibility != View.VISIBLE) return
