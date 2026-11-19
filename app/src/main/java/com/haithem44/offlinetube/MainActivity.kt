@@ -183,7 +183,6 @@ class IconDrawable(private val kind: Int, initial: Int) : Drawable() {
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 }
 
-/** Downloader مطلوب لتهيئة NewPipe قبل أي استخراج (جلب الجودات والتعليقات). */
 class SimpleDownloader : Downloader() {
     override fun execute(request: Request): Response {
         val conn = URL(request.url()).openConnection() as HttpURLConnection
@@ -229,7 +228,6 @@ class DownloadTask(val id: Int, val title: String, val url: String, val fileName
     val isActive: Boolean get() = state == QUEUED || state == DOWNLOADING || state == SAVING
 }
 
-/** مدير تنزيل على مستوى التطبيق: عدة فيديوهات معًا، وكل فيديو يُقسَّم إلى 6 أجزاء متوازية. */
 object DownloadCenter {
     const val SEGMENTS = 6
     private const val UA = "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36"
@@ -306,7 +304,6 @@ object DownloadCenter {
         }
     }
 
-    /** دمج مسار الفيديو مع مسار الصوت في ملف MP4 واحد */
     private fun mux(video: File, audio: File, out: File) {
         val vEx = MediaExtractor()
         val aEx = MediaExtractor()
@@ -353,7 +350,6 @@ object DownloadCenter {
         }
     }
 
-    /** يرجع (الحجم الكلي، هل الخادم يدعم Range) */
     private fun probe(url: String): Pair<Long, Boolean> {
         val c = URL(url).openConnection() as HttpURLConnection
         try {
@@ -488,7 +484,7 @@ class MainActivity : AppCompatActivity() {
     private var query = ""
 
     private lateinit var refreshBar: TextView
-    private var refreshing = false
+    @Volatile private var refreshing = false
     private var touchStartY = 0f
     private var pulling = false
     private var firstResume = true
@@ -1114,12 +1110,21 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setSpinning(on: Boolean) {
-        spinAnim?.cancel(); spinAnim = null
-        refreshViews.forEach { it.rotation = 0f }
+        // إيقاف أي أنيميشن سابق وإرجاع كل الأيقونات لوضعها الطبيعي
+        try { spinAnim?.cancel() } catch (_: Exception) {}
+        spinAnim = null
+        refreshViews.forEach {
+            try { it.animate().cancel() } catch (_: Exception) {}
+            it.rotation = 0f
+            it.invalidate()
+        }
         if (!on) return
         spinAnim = ValueAnimator.ofFloat(0f, 360f).apply {
             duration = 800; repeatCount = ValueAnimator.INFINITE; interpolator = LinearInterpolator()
-            addUpdateListener { a -> val r = a.animatedValue as Float; refreshViews.forEach { v -> v.rotation = r } }
+            addUpdateListener { a ->
+                val r = a.animatedValue as Float
+                refreshViews.forEach { v -> v.rotation = r }
+            }
             start()
         }
     }
@@ -1135,6 +1140,7 @@ class MainActivity : AppCompatActivity() {
             val exts = setOf("mp4", "mkv", "webm", "3gp", "mov", "avi", "m4v")
             val files = ArrayList<String>()
             for (d in dirs.distinct()) {
+                if (!d.exists()) continue
                 d.walkTopDown().maxDepth(3)
                     .filter { it.isFile && it.extension.lowercase() in exts }
                     .forEach { if (files.size < 300) files.add(it.path) }
@@ -1142,26 +1148,48 @@ class MainActivity : AppCompatActivity() {
             if (files.isEmpty()) return
             val latch = CountDownLatch(files.size)
             MediaScannerConnection.scanFile(this, files.toTypedArray(), null) { _, _ -> latch.countDown() }
-            latch.await(4, TimeUnit.SECONDS)
+            latch.await(3, TimeUnit.SECONDS)
         } catch (_: Exception) {}
     }
 
+    /**
+     * إصلاح زر التحديث:
+     * - إذا كان هناك تحديث جارٍ، يُلغى ويُعاد بدءه (بدل تجاهل الضغط).
+     * - try/catch/finally يضمن عدم بقاء refreshing عالقاً على true.
+     */
     private fun reloadVideos(manual: Boolean = true) {
         if (tab == YT_TAB && manual) {
             ytTab.reload()
             Toast.makeText(this, "تم تحديث صفحة YouTube", Toast.LENGTH_SHORT).show()
             return
         }
-        if (refreshing) return
+
+        // إذا كان هناك تحديث جارٍ: أعد الضبط وابدأ من جديد (بدل تجاهل الضغط)
+        if (refreshing) {
+            refreshing = false
+            refreshBar.visibility = View.GONE
+            setSpinning(false)
+        }
+
         refreshing = true
         refreshBar.visibility = View.VISIBLE
         setSpinning(true)
         val started = System.currentTimeMillis()
+
         pool.execute {
-            scanMediaFolders()
-            val wait = 700L - (System.currentTimeMillis() - started)
-            if (wait > 0) { try { Thread.sleep(wait) } catch (_: Exception) {} }
-            ui.post { loadVideos() }
+            try {
+                scanMediaFolders()
+                val wait = 700L - (System.currentTimeMillis() - started)
+                if (wait > 0) { try { Thread.sleep(wait) } catch (_: Exception) {} }
+                ui.post { loadVideos() }
+            } catch (e: Exception) {
+                ui.post {
+                    refreshing = false
+                    refreshBar.visibility = View.GONE
+                    setSpinning(false)
+                    Toast.makeText(this@MainActivity, "فشل التحديث: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
         }
     }
 
@@ -1192,41 +1220,60 @@ class MainActivity : AppCompatActivity() {
         if (requestCode == 100) loadVideos()
     }
 
+    /**
+     * إصلاح رئيسي: try/catch/finally يضمن إنهاء حالة "التحديث الجاري"
+     * حتى لو فشل جلب الفيديوهات أو تحديث القائمة.
+     */
     private fun loadVideos() {
         pool.execute {
-            val result = ArrayList<VideoItem>()
             try {
-                val collection = if (Build.VERSION.SDK_INT >= 29) {
-                    MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
-                } else {
-                    MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-                }
-                val proj = arrayOf(MediaStore.Video.Media._ID, MediaStore.Video.Media.TITLE, MediaStore.Video.Media.DURATION)
-                val sort = MediaStore.Video.Media.DATE_ADDED + " DESC"
+                val result = ArrayList<VideoItem>()
+                try {
+                    val collection = if (Build.VERSION.SDK_INT >= 29) {
+                        MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+                    } else {
+                        MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                    }
+                    val proj = arrayOf(MediaStore.Video.Media._ID, MediaStore.Video.Media.TITLE, MediaStore.Video.Media.DURATION)
+                    val sort = MediaStore.Video.Media.DATE_ADDED + " DESC"
 
-                contentResolver.query(collection, proj, null, null, sort)?.use { c ->
-                    val idIdx = c.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
-                    val tIdx = c.getColumnIndexOrThrow(MediaStore.Video.Media.TITLE)
-                    val dIdx = c.getColumnIndexOrThrow(MediaStore.Video.Media.DURATION)
-                    while (c.moveToNext()) {
-                        val id = c.getLong(idIdx)
-                        val title = c.getString(tIdx) ?: "فيديو"
-                        val dur = c.getLong(dIdx)
-                        val uri = ContentUris.withAppendedId(collection, id)
-                        result.add(VideoItem(id, title, dur, uri))
+                    contentResolver.query(collection, proj, null, null, sort)?.use { c ->
+                        val idIdx = c.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
+                        val tIdx = c.getColumnIndexOrThrow(MediaStore.Video.Media.TITLE)
+                        val dIdx = c.getColumnIndexOrThrow(MediaStore.Video.Media.DURATION)
+                        while (c.moveToNext()) {
+                            val id = c.getLong(idIdx)
+                            val title = c.getString(tIdx) ?: "فيديو"
+                            val dur = c.getLong(dIdx)
+                            val uri = ContentUris.withAppendedId(collection, id)
+                            result.add(VideoItem(id, title, dur, uri))
+                        }
+                    }
+                } catch (_: Exception) {}
+
+                ui.post {
+                    try {
+                        all.clear(); all.addAll(result)
+                        applyFilter()
+                    } finally {
+                        if (refreshing) {
+                            refreshing = false
+                            refreshBar.visibility = View.GONE
+                            setSpinning(false)
+                            Toast.makeText(this@MainActivity, "تم التحديث ✓  (${all.size} فيديو)", Toast.LENGTH_SHORT).show()
+                        }
+                        restorePendingPlayer()
                     }
                 }
-            } catch (_: Exception) {}
-            ui.post {
-                all.clear(); all.addAll(result)
-                applyFilter()
-                if (refreshing) {
-                    refreshing = false
-                    refreshBar.visibility = View.GONE
-                    setSpinning(false)
-                    Toast.makeText(this@MainActivity, "تم التحديث ✓  (" + all.size + " فيديو)", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                ui.post {
+                    if (refreshing) {
+                        refreshing = false
+                        refreshBar.visibility = View.GONE
+                        setSpinning(false)
+                        Toast.makeText(this@MainActivity, "فشل تحميل الفيديوهات", Toast.LENGTH_SHORT).show()
+                    }
                 }
-                restorePendingPlayer()
             }
         }
     }
@@ -1559,7 +1606,6 @@ class MainActivity : AppCompatActivity() {
             setCutoutMode(true)
             controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             controller.hide(WindowInsetsCompat.Type.systemBars())
-            // الصورة تملأ الشاشة كاملة بلا حواف سوداء
             aspectLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
             topBar.visibility = View.GONE
             fsBtn.setImageDrawable(IconDrawable(IconDrawable.COMPRESS, Color.WHITE))
@@ -1698,7 +1744,6 @@ class MainActivity : AppCompatActivity() {
         commentsList.addView(tv)
     }
 
-    // تُنفَّذ على خيط خلفي (فيها طلب شبكة)
     private fun loadRealComments(videoId: String) {
         try {
             val videoUrl = "https://www.youtube.com/watch?v=$videoId"
@@ -1833,7 +1878,6 @@ class MainActivity : AppCompatActivity() {
                 val info = StreamInfo.getInfo(ServiceList.YouTube, url)
                 val options = ArrayList<QualityOption>()
 
-                // جودات عالية: فيديو بدون صوت (H.264) + أفضل صوت M4A ثم دمجهما
                 val bestAudio = info.audioStreams
                     .filter { it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP && it.format == NpFormat.M4A }
                     .maxByOrNull { it.averageBitrate }
@@ -1848,7 +1892,6 @@ class MainActivity : AppCompatActivity() {
                             options.add(QualityOption("${best.resolution} • mp4 (دمج صوت)", best.content, bestAudio.content, "mp4"))
                         }
                 }
-                // جودات جاهزة بصوتها (غالبًا 360p)
                 val haveHeights = options.map { it.label.substringBefore("p") }.toSet()
                 info.videoStreams
                     .filter { it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP }
@@ -2064,7 +2107,6 @@ class MainActivity : AppCompatActivity() {
             }
             card.layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(8), dp(6), dp(8), dp(6)) }
 
-            // صورة كبيرة بعرض البطاقة كاملة (16:9)
             val thumb = ImageView(ctx)
             thumb.scaleType = ImageView.ScaleType.CENTER_CROP
             thumb.clipToOutline = true
