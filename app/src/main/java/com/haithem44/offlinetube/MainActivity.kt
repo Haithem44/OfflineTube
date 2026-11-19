@@ -183,6 +183,7 @@ class IconDrawable(private val kind: Int, initial: Int) : Drawable() {
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 }
 
+/** Downloader مطلوب لتهيئة NewPipe قبل أي استخراج (جلب الجودات والتعليقات). */
 class SimpleDownloader : Downloader() {
     override fun execute(request: Request): Response {
         val conn = URL(request.url()).openConnection() as HttpURLConnection
@@ -228,6 +229,7 @@ class DownloadTask(val id: Int, val title: String, val url: String, val fileName
     val isActive: Boolean get() = state == QUEUED || state == DOWNLOADING || state == SAVING
 }
 
+/** مدير تنزيل على مستوى التطبيق: عدة فيديوهات معًا، وكل فيديو يُقسَّم إلى 6 أجزاء متوازية. */
 object DownloadCenter {
     const val SEGMENTS = 6
     private const val UA = "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36"
@@ -304,6 +306,7 @@ object DownloadCenter {
         }
     }
 
+    /** دمج مسار الفيديو مع مسار الصوت في ملف MP4 واحد */
     private fun mux(video: File, audio: File, out: File) {
         val vEx = MediaExtractor()
         val aEx = MediaExtractor()
@@ -350,6 +353,7 @@ object DownloadCenter {
         }
     }
 
+    /** يرجع (الحجم الكلي، هل الخادم يدعم Range) */
     private fun probe(url: String): Pair<Long, Boolean> {
         val c = URL(url).openConnection() as HttpURLConnection
         try {
@@ -484,8 +488,7 @@ class MainActivity : AppCompatActivity() {
     private var query = ""
 
     private lateinit var refreshBar: TextView
-    @Volatile private var refreshing = false
-    @Volatile private var shuffleVideos = false
+    private var refreshing = false
     private var touchStartY = 0f
     private var pulling = false
     private var firstResume = true
@@ -1111,24 +1114,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setSpinning(on: Boolean) {
-        try { spinAnim?.cancel() } catch (_: Exception) {}
-        spinAnim = null
-        refreshViews.forEach {
-            try { it.animate().cancel() } catch (_: Exception) {}
-            it.rotation = 0f
-            it.invalidate()
-        }
+        spinAnim?.cancel(); spinAnim = null
+        refreshViews.forEach { it.rotation = 0f }
         if (!on) return
         spinAnim = ValueAnimator.ofFloat(0f, 360f).apply {
             duration = 800; repeatCount = ValueAnimator.INFINITE; interpolator = LinearInterpolator()
-            addUpdateListener { a ->
-                val r = a.animatedValue as Float
-                refreshViews.forEach { v -> v.rotation = r }
-            }
+            addUpdateListener { a -> val r = a.animatedValue as Float; refreshViews.forEach { v -> v.rotation = r } }
             start()
         }
     }
 
+    /** يفحص المجلدات ليُدخل أي فيديوهات جديدة في مكتبة الجهاز قبل قراءة القائمة */
     private fun scanMediaFolders() {
         try {
             val dirs = ArrayList<File>()
@@ -1139,7 +1135,6 @@ class MainActivity : AppCompatActivity() {
             val exts = setOf("mp4", "mkv", "webm", "3gp", "mov", "avi", "m4v")
             val files = ArrayList<String>()
             for (d in dirs.distinct()) {
-                if (!d.exists()) continue
                 d.walkTopDown().maxDepth(3)
                     .filter { it.isFile && it.extension.lowercase() in exts }
                     .forEach { if (files.size < 300) files.add(it.path) }
@@ -1147,7 +1142,7 @@ class MainActivity : AppCompatActivity() {
             if (files.isEmpty()) return
             val latch = CountDownLatch(files.size)
             MediaScannerConnection.scanFile(this, files.toTypedArray(), null) { _, _ -> latch.countDown() }
-            latch.await(3, TimeUnit.SECONDS)
+            latch.await(4, TimeUnit.SECONDS)
         } catch (_: Exception) {}
     }
 
@@ -1157,35 +1152,16 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "تم تحديث صفحة YouTube", Toast.LENGTH_SHORT).show()
             return
         }
-
-        if (refreshing) {
-            refreshing = false
-            refreshBar.visibility = View.GONE
-            setSpinning(false)
-        }
-
+        if (refreshing) return
         refreshing = true
-        if (manual) {
-            shuffleVideos = true
-        }
         refreshBar.visibility = View.VISIBLE
         setSpinning(true)
         val started = System.currentTimeMillis()
-
         pool.execute {
-            try {
-                scanMediaFolders()
-                val wait = 700L - (System.currentTimeMillis() - started)
-                if (wait > 0) { try { Thread.sleep(wait) } catch (_: Exception) {} }
-                ui.post { loadVideos() }
-            } catch (e: Exception) {
-                ui.post {
-                    refreshing = false
-                    refreshBar.visibility = View.GONE
-                    setSpinning(false)
-                    Toast.makeText(this@MainActivity, "فشل التحديث: ${e.message}", Toast.LENGTH_SHORT).show()
-                }
-            }
+            scanMediaFolders()
+            val wait = 700L - (System.currentTimeMillis() - started)
+            if (wait > 0) { try { Thread.sleep(wait) } catch (_: Exception) {} }
+            ui.post { loadVideos() }
         }
     }
 
@@ -1216,64 +1192,62 @@ class MainActivity : AppCompatActivity() {
         if (requestCode == 100) loadVideos()
     }
 
+    /** true = يشمل المجلدات الفرعية داخل المجلد المختار، false = المجلد نفسه فقط */
+    private val includeSubfolders = false
+
+    /** شرط الاستعلام: فيديوهات المجلد المختار فقط. إن لم يُختر مجلد بعد تُعرض كل الفيديوهات. */
+    @Suppress("DEPRECATION")
+    private fun folderSelection(): Pair<String?, Array<String>?> {
+        val dir = folderPath.trimEnd('/')
+        if (dir.isEmpty()) return Pair(null, null)
+        val esc = dir.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        val col = MediaStore.Video.Media.DATA
+        return if (includeSubfolders) {
+            Pair("$col LIKE ? ESCAPE '\\'", arrayOf("$esc/%"))
+        } else {
+            Pair(
+                "$col LIKE ? ESCAPE '\\' AND $col NOT LIKE ? ESCAPE '\\'",
+                arrayOf("$esc/%", "$esc/%/%")
+            )
+        }
+    }
+
     private fun loadVideos() {
         pool.execute {
+            val result = ArrayList<VideoItem>()
             try {
-                val result = ArrayList<VideoItem>()
-                try {
-                    val collection = if (Build.VERSION.SDK_INT >= 29) {
-                        MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
-                    } else {
-                        MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-                    }
-                    val proj = arrayOf(MediaStore.Video.Media._ID, MediaStore.Video.Media.TITLE, MediaStore.Video.Media.DURATION)
-                    val sort = MediaStore.Video.Media.DATE_ADDED + " DESC"
+                val collection = if (Build.VERSION.SDK_INT >= 29) {
+                    MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+                } else {
+                    MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                }
+                val proj = arrayOf(MediaStore.Video.Media._ID, MediaStore.Video.Media.TITLE, MediaStore.Video.Media.DURATION)
+                val sort = MediaStore.Video.Media.DATE_ADDED + " DESC"
 
-                    contentResolver.query(collection, proj, null, null, sort)?.use { c ->
-                        val idIdx = c.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
-                        val tIdx = c.getColumnIndexOrThrow(MediaStore.Video.Media.TITLE)
-                        val dIdx = c.getColumnIndexOrThrow(MediaStore.Video.Media.DURATION)
-                        while (c.moveToNext()) {
-                            val id = c.getLong(idIdx)
-                            val title = c.getString(tIdx) ?: "فيديو"
-                            val dur = c.getLong(dIdx)
-                            val uri = ContentUris.withAppendedId(collection, id)
-                            result.add(VideoItem(id, title, dur, uri))
-                        }
-                    }
-                } catch (_: Exception) {}
-
-                ui.post {
-                    try {
-                        all.clear()
-                        all.addAll(result)
-                        
-                        if (shuffleVideos) {
-                            all.shuffle()
-                            shuffleVideos = false
-                        }
-                        
-                        applyFilter()
-                        listView.setSelection(0)
-                    } finally {
-                        if (refreshing) {
-                            refreshing = false
-                            refreshBar.visibility = View.GONE
-                            setSpinning(false)
-                            Toast.makeText(this@MainActivity, "تم التحديث ✓  (${all.size} فيديو)", Toast.LENGTH_SHORT).show()
-                        }
-                        restorePendingPlayer()
+                val (selection, args) = folderSelection()
+                contentResolver.query(collection, proj, selection, args, sort)?.use { c ->
+                    val idIdx = c.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
+                    val tIdx = c.getColumnIndexOrThrow(MediaStore.Video.Media.TITLE)
+                    val dIdx = c.getColumnIndexOrThrow(MediaStore.Video.Media.DURATION)
+                    while (c.moveToNext()) {
+                        val id = c.getLong(idIdx)
+                        val title = c.getString(tIdx) ?: "فيديو"
+                        val dur = c.getLong(dIdx)
+                        val uri = ContentUris.withAppendedId(collection, id)
+                        result.add(VideoItem(id, title, dur, uri))
                     }
                 }
-            } catch (e: Exception) {
-                ui.post {
-                    if (refreshing) {
-                        refreshing = false
-                        refreshBar.visibility = View.GONE
-                        setSpinning(false)
-                        Toast.makeText(this@MainActivity, "فشل تحميل الفيديوهات", Toast.LENGTH_SHORT).show()
-                    }
+            } catch (_: Exception) {}
+            ui.post {
+                all.clear(); all.addAll(result)
+                applyFilter()
+                if (refreshing) {
+                    refreshing = false
+                    refreshBar.visibility = View.GONE
+                    setSpinning(false)
+                    Toast.makeText(this@MainActivity, "تم التحديث ✓  (" + all.size + " فيديو)", Toast.LENGTH_SHORT).show()
                 }
+                restorePendingPlayer()
             }
         }
     }
@@ -1606,6 +1580,7 @@ class MainActivity : AppCompatActivity() {
             setCutoutMode(true)
             controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             controller.hide(WindowInsetsCompat.Type.systemBars())
+            // الصورة تملأ الشاشة كاملة بلا حواف سوداء
             aspectLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
             topBar.visibility = View.GONE
             fsBtn.setImageDrawable(IconDrawable(IconDrawable.COMPRESS, Color.WHITE))
@@ -1744,6 +1719,7 @@ class MainActivity : AppCompatActivity() {
         commentsList.addView(tv)
     }
 
+    // تُنفَّذ على خيط خلفي (فيها طلب شبكة)
     private fun loadRealComments(videoId: String) {
         try {
             val videoUrl = "https://www.youtube.com/watch?v=$videoId"
@@ -1878,6 +1854,7 @@ class MainActivity : AppCompatActivity() {
                 val info = StreamInfo.getInfo(ServiceList.YouTube, url)
                 val options = ArrayList<QualityOption>()
 
+                // جودات عالية: فيديو بدون صوت (H.264) + أفضل صوت M4A ثم دمجهما
                 val bestAudio = info.audioStreams
                     .filter { it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP && it.format == NpFormat.M4A }
                     .maxByOrNull { it.averageBitrate }
@@ -1892,6 +1869,7 @@ class MainActivity : AppCompatActivity() {
                             options.add(QualityOption("${best.resolution} • mp4 (دمج صوت)", best.content, bestAudio.content, "mp4"))
                         }
                 }
+                // جودات جاهزة بصوتها (غالبًا 360p)
                 val haveHeights = options.map { it.label.substringBefore("p") }.toSet()
                 info.videoStreams
                     .filter { it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP }
@@ -2107,6 +2085,7 @@ class MainActivity : AppCompatActivity() {
             }
             card.layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(8), dp(6), dp(8), dp(6)) }
 
+            // صورة كبيرة بعرض البطاقة كاملة (16:9)
             val thumb = ImageView(ctx)
             thumb.scaleType = ImageView.ScaleType.CENTER_CROP
             thumb.clipToOutline = true
