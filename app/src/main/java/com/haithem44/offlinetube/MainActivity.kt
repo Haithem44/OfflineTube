@@ -535,6 +535,8 @@ class MainActivity : AppCompatActivity() {
     private var loadGen = 0
     private var loadedOnce = false
     private var refreshManual = true
+    private var shuffleNext = false
+    private val shuffleRank = HashMap<Long, Int>()
     // الصور المنتظَرة لكل فيديو (تُستخدم من الخيط الرئيسي فقط) لمنع تكرار العمل
     private val thumbWaiters = HashMap<Long, MutableList<ImageView>>()
 
@@ -557,8 +559,11 @@ class MainActivity : AppCompatActivity() {
     private val thumbW: Int by lazy { maxOf(resources.displayMetrics.widthPixels, 1080).coerceAtMost(2160) }
     private val thumbH: Int by lazy { thumbW * 9 / 16 }
     private val thumbDir: File by lazy {
-        try { File(cacheDir, "thumbs_hq_v2").deleteRecursively() } catch (_: Exception) {}
-        File(cacheDir, "thumbs_hq_v3").apply { mkdirs() }
+        try {
+            File(cacheDir, "thumbs_hq_v2").deleteRecursively()
+            File(cacheDir, "thumbs_hq_v3").deleteRecursively()
+        } catch (_: Exception) {}
+        File(cacheDir, "thumbs_hq_v4").apply { mkdirs() }
     }
 
     private fun loadFont(name: String): Typeface? {
@@ -1182,6 +1187,7 @@ class MainActivity : AppCompatActivity() {
         if (refreshing) return
         refreshing = true
         refreshManual = manual
+        if (manual) shuffleNext = true
         if (manual) {
             refreshBar.visibility = View.VISIBLE
             setSpinning(true)
@@ -1278,17 +1284,28 @@ class MainActivity : AppCompatActivity() {
             ui.post {
                 // نتيجة قديمة سبقتها نتيجة أحدث: نتجاهلها
                 if (gen != loadGen) return@post
+                // زر التحديث: خلط جديد للترتيب
+                val didShuffle = shuffleNext
+                if (shuffleNext) {
+                    shuffleNext = false
+                    shuffleRank.clear()
+                    result.shuffled().forEachIndexed { i, item -> shuffleRank[item.id] = i }
+                }
+                // يبقى الخلط ثابتًا في التحديثات التلقائية؛ والفيديو الجديد يظهر في الأعلى
+                val ordered: List<VideoItem> =
+                    if (shuffleRank.isEmpty()) result else result.sortedBy { shuffleRank[it.id] ?: -1 }
                 // لا نعيد بناء القائمة إن لم يتغير شيء (يمنع الوميض وإعادة تحميل الصور)
-                if (!loadedOnce || result != all) {
-                    all.clear(); all.addAll(result)
+                if (!loadedOnce || ordered != all) {
+                    all.clear(); all.addAll(ordered)
                     loadedOnce = true
                     applyFilter()
+                    if (didShuffle) listView.setSelection(0)
                 }
                 if (refreshing) {
                     refreshing = false
                     refreshBar.visibility = View.GONE
                     setSpinning(false)
-                    if (refreshManual) Toast.makeText(this@MainActivity, "تم التحديث ✓  (" + all.size + " فيديو)", Toast.LENGTH_SHORT).show()
+                    if (refreshManual) Toast.makeText(this@MainActivity, "تم خلط الفيديوهات 🔀  (" + all.size + " فيديو)", Toast.LENGTH_SHORT).show()
                 }
                 restorePendingPlayer()
             }
@@ -2229,11 +2246,27 @@ class MainActivity : AppCompatActivity() {
             try { r.release() } catch (_: Exception) {}
         }
         if (frame == null) return null
-        val scaled = Bitmap.createScaledBitmap(frame, thumbW, thumbH, true)
+        // قصّ من الوسط بنسبة 16:9 دون أي تشويه، بدقة الإطار الأصلي (بلا تكبير)
+        val ratio = thumbW.toFloat() / thumbH
+        val fw = frame.width; val fh = frame.height
+        val cropW: Int; val cropH: Int
+        if (fw.toFloat() / fh > ratio) { cropH = fh; cropW = (fh * ratio).toInt() }
+        else { cropW = fw; cropH = (fw / ratio).toInt() }
+        val sx = (fw - cropW) / 2; val sy = (fh - cropH) / 2
+        val outW = minOf(thumbW, cropW).coerceAtLeast(1)
+        val outH = (outW * 9 / 16).coerceAtLeast(1)
+        val scaled = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
+        Canvas(scaled).drawBitmap(
+            frame,
+            android.graphics.Rect(sx, sy, sx + cropW, sy + cropH),
+            android.graphics.Rect(0, 0, outW, outH),
+            Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG or Paint.DITHER_FLAG)
+        )
+        frame.recycle()
         // كتابة ذرّية: ملف مؤقت ثم إعادة تسمية، فلا يُقرأ ملف ناقص أبدًا
         val tmp = File(thumbDir, "${v.id}_${System.nanoTime()}.tmp")
         try {
-            FileOutputStream(tmp).use { scaled.compress(Bitmap.CompressFormat.JPEG, 85, it) }
+            FileOutputStream(tmp).use { scaled.compress(Bitmap.CompressFormat.JPEG, 95, it) }
             if (!tmp.renameTo(file)) tmp.delete()
         } catch (_: Exception) { tmp.delete() }
         return scaled
