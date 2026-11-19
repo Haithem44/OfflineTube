@@ -94,6 +94,11 @@ import java.net.URL
 import java.util.Locale
 import java.util.concurrent.Executors
 import java.io.IOException
+import java.nio.ByteBuffer
+import android.media.MediaCodec
+import android.media.MediaExtractor
+import android.media.MediaMuxer
+import org.schabi.newpipe.extractor.MediaFormat as NpFormat
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.downloader.Downloader
 import org.schabi.newpipe.extractor.downloader.Request
@@ -207,7 +212,7 @@ class SimpleDownloader : Downloader() {
     }
 }
 
-class DownloadTask(val id: Int, val title: String, val url: String, val fileName: String) {
+class DownloadTask(val id: Int, val title: String, val url: String, val fileName: String, val audioUrl: String? = null) {
     companion object {
         const val QUEUED = 0; const val DOWNLOADING = 1; const val SAVING = 2
         const val DONE = 3; const val FAILED = 4; const val CANCELED = 5
@@ -234,9 +239,9 @@ object DownloadCenter {
     fun init(ctx: Context) { if (appCtx == null) appCtx = ctx.applicationContext }
 
     @Synchronized
-    fun enqueue(title: String, url: String, ext: String): DownloadTask {
+    fun enqueue(title: String, url: String, ext: String, audioUrl: String? = null): DownloadTask {
         val safe = title.replace(Regex("[\\\\/:*?\"<>|\\n\\r]"), "_").trim().take(80).ifEmpty { "video" }
-        val t = DownloadTask(nextId++, title, url, "$safe.$ext")
+        val t = DownloadTask(nextId++, title, url, "$safe.$ext", audioUrl)
         tasks.add(0, t)
         executor.execute { process(t) }
         return t
@@ -250,39 +255,99 @@ object DownloadCenter {
         if (t.abort.compareAndSet(false, true)) t.error = e.message ?: e.javaClass.simpleName
     }
 
+    private fun fetchFile(t: DownloadTask, url: String, tmp: File, total: Long, ranges: Boolean) {
+        if (ranges && total > 1_000_000L) {
+            t.segments = SEGMENTS
+            RandomAccessFile(tmp, "rw").use { it.setLength(total) }
+            val part = total / SEGMENTS
+            val futures = (0 until SEGMENTS).map { i ->
+                val start = i * part
+                val end = if (i == SEGMENTS - 1) total - 1 else start + part - 1
+                executor.submit {
+                    try { downloadRange(t, url, tmp, start, end) } catch (e: Exception) { fail(t, e) }
+                }
+            }
+            futures.forEach { try { it.get() } catch (_: Exception) {} }
+        } else {
+            t.segments = 1
+            try { downloadRange(t, url, tmp, 0L, -1L) } catch (e: Exception) { fail(t, e) }
+        }
+    }
+
     private fun process(t: DownloadTask) {
         val ctx = appCtx ?: return
-        val tmp = File(ctx.cacheDir, "dl_${t.id}_${System.currentTimeMillis()}.part")
+        val stamp = System.currentTimeMillis()
+        val vTmp = File(ctx.cacheDir, "dl_${t.id}_${stamp}_v.part")
+        val aTmp = File(ctx.cacheDir, "dl_${t.id}_${stamp}_a.part")
+        val oTmp = File(ctx.cacheDir, "dl_${t.id}_${stamp}_o.mp4")
         try {
-            val (total, ranges) = probe(t.url)
-            t.total = total
+            val v = probe(t.url)
+            val a = if (t.audioUrl != null) probe(t.audioUrl) else null
+            t.total = if (v.first > 0 && (a == null || a.first > 0)) v.first + (a?.first ?: 0L) else -1L
             t.state = DownloadTask.DOWNLOADING
-            if (ranges && total > 1_000_000L) {
-                t.segments = SEGMENTS
-                RandomAccessFile(tmp, "rw").use { it.setLength(total) }
-                val part = total / SEGMENTS
-                val futures = (0 until SEGMENTS).map { i ->
-                    val start = i * part
-                    val end = if (i == SEGMENTS - 1) total - 1 else start + part - 1
-                    executor.submit {
-                        try { downloadRange(t, tmp, start, end) } catch (e: Exception) { fail(t, e) }
-                    }
-                }
-                futures.forEach { try { it.get() } catch (_: Exception) {} }
-            } else {
-                t.segments = 1
-                try { downloadRange(t, tmp, 0L, -1L) } catch (e: Exception) { fail(t, e) }
-            }
+
+            fetchFile(t, t.url, vTmp, v.first, v.second)
+            if (a != null && !t.abort.get()) fetchFile(t, t.audioUrl!!, aTmp, a.first, a.second)
+
             if (t.cancelled.get()) { t.state = DownloadTask.CANCELED; return }
             if (t.abort.get()) { t.state = DownloadTask.FAILED; return }
+
             t.state = DownloadTask.SAVING
-            saveToGallery(ctx, t, tmp)
+            val finalFile = if (a != null) { mux(vTmp, aTmp, oTmp); oTmp } else vTmp
+            saveToGallery(ctx, t, finalFile)
             t.state = DownloadTask.DONE
         } catch (e: Exception) {
             if (t.cancelled.get()) t.state = DownloadTask.CANCELED
             else { t.error = e.message ?: e.javaClass.simpleName; t.state = DownloadTask.FAILED }
         } finally {
-            tmp.delete()
+            vTmp.delete(); aTmp.delete(); oTmp.delete()
+        }
+    }
+
+    /** دمج مسار الفيديو مع مسار الصوت في ملف MP4 واحد */
+    private fun mux(video: File, audio: File, out: File) {
+        val vEx = MediaExtractor()
+        val aEx = MediaExtractor()
+        var muxer: MediaMuxer? = null
+        try {
+            vEx.setDataSource(video.path)
+            aEx.setDataSource(audio.path)
+            val vi = findTrack(vEx, "video/")
+            val ai = findTrack(aEx, "audio/")
+            if (vi < 0 || ai < 0) throw IOException("تعذّر دمج الصوت والصورة (صيغة غير مدعومة)")
+            vEx.selectTrack(vi); aEx.selectTrack(ai)
+            muxer = MediaMuxer(out.path, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            val vt = muxer.addTrack(vEx.getTrackFormat(vi))
+            val at = muxer.addTrack(aEx.getTrackFormat(ai))
+            muxer.start()
+            copyTrack(vEx, muxer, vt)
+            copyTrack(aEx, muxer, at)
+            muxer.stop()
+        } finally {
+            try { vEx.release() } catch (_: Exception) {}
+            try { aEx.release() } catch (_: Exception) {}
+            try { muxer?.release() } catch (_: Exception) {}
+        }
+    }
+
+    private fun findTrack(ex: MediaExtractor, prefix: String): Int {
+        for (i in 0 until ex.trackCount) {
+            if (ex.getTrackFormat(i).getString(android.media.MediaFormat.KEY_MIME)?.startsWith(prefix) == true) return i
+        }
+        return -1
+    }
+
+    private fun copyTrack(ex: MediaExtractor, muxer: MediaMuxer, track: Int) {
+        val buf = ByteBuffer.allocate(4 * 1024 * 1024)
+        val info = MediaCodec.BufferInfo()
+        while (true) {
+            buf.clear()
+            val size = ex.readSampleData(buf, 0)
+            if (size < 0) break
+            val flags = if (ex.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC != 0) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
+            info.set(0, size, ex.sampleTime, flags)
+            muxer.writeSampleData(track, buf, info)
+            ex.advance()
         }
     }
 
@@ -304,13 +369,13 @@ object DownloadCenter {
         } finally { c.disconnect() }
     }
 
-    private fun downloadRange(t: DownloadTask, file: File, start: Long, end: Long) {
+    private fun downloadRange(t: DownloadTask, url: String, file: File, start: Long, end: Long) {
         var pos = start
         var attempt = 0
         while (!t.abort.get()) {
             var conn: HttpURLConnection? = null
             try {
-                conn = URL(t.url).openConnection() as HttpURLConnection
+                conn = URL(url).openConnection() as HttpURLConnection
                 conn.connectTimeout = 15000; conn.readTimeout = 20000
                 conn.setRequestProperty("User-Agent", UA)
                 if (end >= 0) conn.setRequestProperty("Range", "bytes=$pos-$end")
@@ -1692,27 +1757,54 @@ class MainActivity : AppCompatActivity() {
 
     // ───────────── التنزيلات ─────────────
 
+    private class QualityOption(val label: String, val videoUrl: String, val audioUrl: String?, val ext: String)
+
     private fun startDownloadFromUrl(url: String?) {
         if (url == null) return
         Toast.makeText(this, "جارٍ جلب الجودات المتاحة...", Toast.LENGTH_SHORT).show()
         pool.execute {
             try {
                 val info = StreamInfo.getInfo(ServiceList.YouTube, url)
-                val streams = info.videoStreams
+                val options = ArrayList<QualityOption>()
+
+                // جودات عالية: فيديو بدون صوت (H.264) + أفضل صوت M4A ثم دمجهما
+                val bestAudio = info.audioStreams
+                    .filter { it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP && it.format == NpFormat.M4A }
+                    .maxByOrNull { it.averageBitrate }
+                if (bestAudio != null) {
+                    info.videoOnlyStreams
+                        .filter { it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP &&
+                                  it.format == NpFormat.MPEG_4 &&
+                                  it.codec?.startsWith("avc1") == true }
+                        .groupBy { it.height }
+                        .forEach { (_, list) ->
+                            val best = list.maxByOrNull { it.bitrate } ?: list.first()
+                            options.add(QualityOption("${best.resolution} • mp4 (دمج صوت)", best.content, bestAudio.content, "mp4"))
+                        }
+                }
+                // جودات جاهزة بصوتها (غالبًا 360p)
+                val haveHeights = options.map { it.label.substringBefore("p") }.toSet()
+                info.videoStreams
                     .filter { it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP }
-                    .sortedByDescending { it.height }
+                    .forEach {
+                        if (it.resolution.substringBefore("p") !in haveHeights) {
+                            options.add(QualityOption("${it.resolution} • ${it.format?.suffix ?: "mp4"}", it.content, null, it.format?.suffix ?: "mp4"))
+                        }
+                    }
+                options.sortByDescending { it.label.substringBefore("p").toIntOrNull() ?: 0 }
+
                 ui.post {
                     if (isFinishing || isDestroyed) return@post
-                    if (streams.isEmpty()) {
-                        Toast.makeText(this, "لا توجد جودة متاحة للتحميل المباشر لهذا الفيديو", Toast.LENGTH_LONG).show()
+                    if (options.isEmpty()) {
+                        Toast.makeText(this, "لا توجد جودة متاحة للتحميل لهذا الفيديو", Toast.LENGTH_LONG).show()
                         return@post
                     }
-                    val labels = streams.map { "${it.resolution} • ${it.format?.suffix ?: "mp4"}" }.toTypedArray()
+                    val labels = options.map { it.label }.toTypedArray()
                     AlertDialog.Builder(this)
                         .setTitle("اختر الجودة")
                         .setItems(labels) { _, which ->
-                            val st = streams[which]
-                            DownloadCenter.enqueue(info.name, st.content, st.format?.suffix ?: "mp4")
+                            val o = options[which]
+                            DownloadCenter.enqueue(info.name, o.videoUrl, o.ext, o.audioUrl)
                             Toast.makeText(this, "بدأ التحميل (${DownloadCenter.SEGMENTS} أجزاء متوازية)", Toast.LENGTH_SHORT).show()
                             showDownloads()
                         }
@@ -1846,7 +1938,7 @@ class MainActivity : AppCompatActivity() {
             }
             DownloadTask.SAVING -> {
                 r.bar.isIndeterminate = true
-                r.status.text = "جارٍ الحفظ في المعرض..."
+                r.status.text = if (t.audioUrl != null) "جارٍ دمج الصوت والصورة وحفظ الملف..." else "جارٍ الحفظ في المعرض..."
             }
             DownloadTask.DONE -> {
                 r.bar.isIndeterminate = false; r.bar.progress = 1000
@@ -1897,35 +1989,41 @@ class MainActivity : AppCompatActivity() {
             val ctx = this@MainActivity
 
             val card = LinearLayout(ctx)
-            card.orientation = LinearLayout.HORIZONTAL
+            card.orientation = LinearLayout.VERTICAL
             card.layoutDirection = View.LAYOUT_DIRECTION_RTL
-            card.setPadding(dp(8), dp(6), dp(8), dp(6))
+            card.setPadding(dp(8), dp(8), dp(8), dp(8))
             card.background = GradientDrawable().apply {
-                setColor(Color.parseColor("#1A1A1A")); cornerRadius = dp(12).toFloat()
+                setColor(Color.parseColor("#1A1A1A")); cornerRadius = dp(14).toFloat()
             }
-            card.layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(8), dp(4), dp(8), dp(4)) }
+            card.layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(8), dp(6), dp(8), dp(6)) }
 
+            // صورة كبيرة بعرض البطاقة كاملة (16:9)
             val thumb = ImageView(ctx)
             thumb.scaleType = ImageView.ScaleType.CENTER_CROP
             thumb.clipToOutline = true
             thumb.outlineProvider = object : ViewOutlineProvider() {
                 override fun getOutline(view: View, outline: Outline) {
-                    outline.setRoundRect(0, 0, view.width, view.height, dp(8).toFloat())
+                    outline.setRoundRect(0, 0, view.width, view.height, dp(10).toFloat())
                 }
             }
-            val thumbLp = LinearLayout.LayoutParams(dp(140), dp(80))
-            thumbLp.marginEnd = dp(10)
-            card.addView(thumb, thumbLp)
+            val thumbWidth = resources.displayMetrics.widthPixels - dp(32)
+            card.addView(thumb, LinearLayout.LayoutParams(thumbWidth, thumbWidth * 9 / 16))
             loadThumb(v, thumb)
+
+            val bottom = LinearLayout(ctx)
+            bottom.orientation = LinearLayout.HORIZONTAL
+            bottom.gravity = Gravity.CENTER_VERTICAL
+            bottom.layoutDirection = View.LAYOUT_DIRECTION_RTL
+            card.addView(bottom, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
 
             val info = LinearLayout(ctx)
             info.orientation = LinearLayout.VERTICAL
             info.gravity = Gravity.CENTER_VERTICAL
-            card.addView(info, LinearLayout.LayoutParams(0, -1, 1f))
+            bottom.addView(info, LinearLayout.LayoutParams(0, -2, 1f))
 
             val title = TextView(ctx)
             title.text = v.title
-            title.setTextColor(Color.WHITE); title.textSize = 14f; title.typeface = fontBold
+            title.setTextColor(Color.WHITE); title.textSize = 15f; title.typeface = fontBold
             title.maxLines = 2; title.ellipsize = android.text.TextUtils.TruncateAt.END
             info.addView(title)
 
@@ -1949,7 +2047,7 @@ class MainActivity : AppCompatActivity() {
             menuBtn.background = null
             menuBtn.isFocusable = false
             menuBtn.setOnClickListener { buzz(it); showDeleteDialog(v) }
-            card.addView(menuBtn, LinearLayout.LayoutParams(dp(36), dp(36)))
+            bottom.addView(menuBtn, LinearLayout.LayoutParams(dp(40), dp(40)))
 
             applyFont(card)
             return card
