@@ -93,6 +93,18 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
 import java.util.concurrent.Executors
+import java.io.IOException
+import java.io.RandomAccessFile
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+import android.content.ContentValues
+import android.media.MediaScannerConnection
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import org.schabi.newpipe.extractor.stream.DeliveryMethod
+import org.schabi.newpipe.extractor.stream.StreamInfo
 
 data class VideoItem(val id: Long, val title: String, val duration: Long, val uri: Uri)
 
@@ -102,6 +114,7 @@ class IconDrawable(private val kind: Int, initial: Int) : Drawable() {
         const val FOLDER = 4; const val TRASH = 5; const val BACK = 6; const val LOCK = 7
         const val UNLOCK = 8; const val PAUSE = 9; const val PLAY_FILLED = 10; const val EXPAND = 11
         const val ROTATE = 12; const val PIP = 13; const val COMPRESS = 14; const val COMMENT = 15
+        const val DOWNLOAD = 16
     }
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -147,6 +160,7 @@ class IconDrawable(private val kind: Int, initial: Int) : Drawable() {
             PIP -> { canvas.drawRoundRect(RectF(3f, 5f, 21f, 19f), 2f, 2f, paint); paint.style = Paint.Style.FILL; canvas.drawRoundRect(RectF(12f, 11f, 19f, 17f), 1f, 1f, paint); paint.style = Paint.Style.STROKE }
             COMPRESS -> { p.moveTo(9f, 4f); p.lineTo(9f, 9f); p.lineTo(4f, 9f); p.moveTo(15f, 4f); p.lineTo(15f, 9f); p.lineTo(20f, 9f); p.moveTo(20f, 15f); p.lineTo(15f, 15f); p.lineTo(15f, 20f); p.moveTo(4f, 15f); p.lineTo(9f, 15f); p.lineTo(9f, 20f) }
             COMMENT -> { canvas.drawRoundRect(RectF(3f, 4f, 21f, 17f), 3f, 3f, paint); p.moveTo(8f, 17f); p.lineTo(8f, 21f); p.lineTo(12.5f, 17f) }
+            DOWNLOAD -> { p.moveTo(12f, 4f); p.lineTo(12f, 15f); p.moveTo(7f, 10.5f); p.lineTo(12f, 15.5f); p.lineTo(17f, 10.5f); p.moveTo(5f, 19.5f); p.lineTo(19f, 19.5f) }
         }
         canvas.drawPath(p, paint); canvas.restore()
     }
@@ -155,6 +169,170 @@ class IconDrawable(private val kind: Int, initial: Int) : Drawable() {
     override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter; invalidateSelf() }
     @Suppress("DEPRECATION")
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+}
+
+class DownloadTask(val id: Int, val title: String, val url: String, val fileName: String) {
+    companion object {
+        const val QUEUED = 0; const val DOWNLOADING = 1; const val SAVING = 2
+        const val DONE = 3; const val FAILED = 4; const val CANCELED = 5
+    }
+    @Volatile var state = QUEUED
+    @Volatile var total = -1L
+    @Volatile var segments = 1
+    @Volatile var error: String? = null
+    val downloaded = AtomicLong(0L)
+    val abort = AtomicBoolean(false)
+    val cancelled = AtomicBoolean(false)
+    val isActive: Boolean get() = state == QUEUED || state == DOWNLOADING || state == SAVING
+}
+
+/** مدير تنزيل على مستوى التطبيق: عدة فيديوهات معًا، وكل فيديو يُقسَّم إلى 6 أجزاء متوازية. */
+object DownloadCenter {
+    const val SEGMENTS = 6
+    private const val UA = "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36"
+    private val executor = Executors.newCachedThreadPool()
+    private var appCtx: Context? = null
+    private var nextId = 1
+    val tasks = CopyOnWriteArrayList<DownloadTask>()
+
+    fun init(ctx: Context) { if (appCtx == null) appCtx = ctx.applicationContext }
+
+    @Synchronized
+    fun enqueue(title: String, url: String, ext: String): DownloadTask {
+        val safe = title.replace(Regex("[\\\\/:*?\"<>|\\n\\r]"), "_").trim().take(80).ifEmpty { "video" }
+        val t = DownloadTask(nextId++, title, url, "$safe.$ext")
+        tasks.add(0, t)
+        executor.execute { process(t) }
+        return t
+    }
+
+    fun cancel(t: DownloadTask) { t.cancelled.set(true); t.abort.set(true) }
+    fun remove(t: DownloadTask) { if (!t.isActive) tasks.remove(t) }
+
+    private fun fail(t: DownloadTask, e: Exception) {
+        if (t.cancelled.get()) return
+        if (t.abort.compareAndSet(false, true)) t.error = e.message ?: e.javaClass.simpleName
+    }
+
+    private fun process(t: DownloadTask) {
+        val ctx = appCtx ?: return
+        val tmp = File(ctx.cacheDir, "dl_${t.id}_${System.currentTimeMillis()}.part")
+        try {
+            val (total, ranges) = probe(t.url)
+            t.total = total
+            t.state = DownloadTask.DOWNLOADING
+            if (ranges && total > 1_000_000L) {
+                t.segments = SEGMENTS
+                RandomAccessFile(tmp, "rw").use { it.setLength(total) }
+                val part = total / SEGMENTS
+                val futures = (0 until SEGMENTS).map { i ->
+                    val start = i * part
+                    val end = if (i == SEGMENTS - 1) total - 1 else start + part - 1
+                    executor.submit {
+                        try { downloadRange(t, tmp, start, end) } catch (e: Exception) { fail(t, e) }
+                    }
+                }
+                futures.forEach { try { it.get() } catch (_: Exception) {} }
+            } else {
+                t.segments = 1
+                try { downloadRange(t, tmp, 0L, -1L) } catch (e: Exception) { fail(t, e) }
+            }
+            if (t.cancelled.get()) { t.state = DownloadTask.CANCELED; return }
+            if (t.abort.get()) { t.state = DownloadTask.FAILED; return }
+            t.state = DownloadTask.SAVING
+            saveToGallery(ctx, t, tmp)
+            t.state = DownloadTask.DONE
+        } catch (e: Exception) {
+            if (t.cancelled.get()) t.state = DownloadTask.CANCELED
+            else { t.error = e.message ?: e.javaClass.simpleName; t.state = DownloadTask.FAILED }
+        } finally {
+            tmp.delete()
+        }
+    }
+
+    /** يرجع (الحجم الكلي، هل الخادم يدعم Range) */
+    private fun probe(url: String): Pair<Long, Boolean> {
+        val c = URL(url).openConnection() as HttpURLConnection
+        try {
+            c.connectTimeout = 15000; c.readTimeout = 15000
+            c.setRequestProperty("User-Agent", UA)
+            c.setRequestProperty("Range", "bytes=0-0")
+            c.connect()
+            val code = c.responseCode
+            if (code == 206) {
+                val total = c.getHeaderField("Content-Range")?.substringAfterLast('/')?.trim()?.toLongOrNull() ?: -1L
+                if (total > 0) return Pair(total, true)
+            }
+            if (code in 200..299) return Pair(c.contentLengthLong, false)
+            throw IOException("HTTP $code")
+        } finally { c.disconnect() }
+    }
+
+    private fun downloadRange(t: DownloadTask, file: File, start: Long, end: Long) {
+        var pos = start
+        var attempt = 0
+        while (!t.abort.get()) {
+            var conn: HttpURLConnection? = null
+            try {
+                conn = URL(t.url).openConnection() as HttpURLConnection
+                conn.connectTimeout = 15000; conn.readTimeout = 20000
+                conn.setRequestProperty("User-Agent", UA)
+                if (end >= 0) conn.setRequestProperty("Range", "bytes=$pos-$end")
+                conn.connect()
+                val code = conn.responseCode
+                if (end >= 0 && code != 206) throw IOException("HTTP $code")
+                if (end < 0 && code !in 200..299) throw IOException("HTTP $code")
+                conn.inputStream.use { input ->
+                    RandomAccessFile(file, "rw").use { raf ->
+                        raf.seek(pos)
+                        val buf = ByteArray(64 * 1024)
+                        while (true) {
+                            if (t.abort.get()) return
+                            val n = input.read(buf)
+                            if (n < 0) break
+                            raf.write(buf, 0, n)
+                            pos += n
+                            t.downloaded.addAndGet(n.toLong())
+                        }
+                    }
+                }
+                if (end < 0 || pos > end) return
+                throw IOException("انقطع الاتصال")
+            } catch (e: Exception) {
+                if (t.abort.get()) return
+                if (end < 0 || ++attempt >= 4) throw e
+                Thread.sleep(1000L * attempt)
+            } finally {
+                conn?.disconnect()
+            }
+        }
+    }
+
+    private fun saveToGallery(ctx: Context, t: DownloadTask, src: File) {
+        val mime = if (t.fileName.endsWith(".webm")) "video/webm" else "video/mp4"
+        if (Build.VERSION.SDK_INT >= 29) {
+            val values = ContentValues().apply {
+                put(MediaStore.Video.Media.DISPLAY_NAME, t.fileName)
+                put(MediaStore.Video.Media.MIME_TYPE, mime)
+                put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/TubeTV")
+                put(MediaStore.Video.Media.IS_PENDING, 1)
+            }
+            val coll = MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            val uri = ctx.contentResolver.insert(coll, values) ?: throw IOException("تعذّر إنشاء الملف")
+            val out = ctx.contentResolver.openOutputStream(uri) ?: throw IOException("تعذّر فتح الملف للكتابة")
+            out.use { o -> src.inputStream().use { it.copyTo(o, 256 * 1024) } }
+            values.clear(); values.put(MediaStore.Video.Media.IS_PENDING, 0)
+            ctx.contentResolver.update(uri, values, null, null)
+        } else {
+            val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES), "TubeTV")
+            dir.mkdirs()
+            var dest = File(dir, t.fileName)
+            var n = 1
+            while (dest.exists()) { dest = File(dir, t.fileName.substringBeforeLast('.') + " ($n)." + t.fileName.substringAfterLast('.')); n++ }
+            src.copyTo(dest, overwrite = true)
+            MediaScannerConnection.scanFile(ctx, arrayOf(dest.path), arrayOf(mime), null)
+        }
+    }
 }
 
 class ShimmerView(ctx: Context) : View(ctx) {
@@ -218,6 +396,23 @@ class MainActivity : AppCompatActivity() {
     private var pendingOpenId: Long = -1L
     private var pendingRestoreComments = false
     private var observerRegistered = false
+
+    private lateinit var dlPanel: LinearLayout
+    private lateinit var dlList: LinearLayout
+    private lateinit var dlEmpty: TextView
+    private lateinit var dlBadge: TextView
+    private val dlRows = HashMap<Int, DlRow>()
+
+    private class DlRow(val root: LinearLayout, val title: TextView, val bar: ProgressBar, val status: TextView, val action: TextView) {
+        var lastBytes = 0L; var lastTime = 0L; var speed = 0L
+    }
+
+    private val dlTicker = object : Runnable {
+        override fun run() {
+            try { refreshDownloads() } catch (_: Exception) {}
+            ui.postDelayed(this, 500)
+        }
+    }
 
     private val tabNames = arrayOf("الصفحة الرئيسية", "تابع المشاهدة", "الأطول", "تمت المشاهدة", "Shorts", "YouTube")
     private val tabTexts = ArrayList<TextView>()
@@ -399,6 +594,7 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = Prefs(this)
+        DownloadCenter.init(this)
         folderPath = prefs.folderPath
         tab = savedInstanceState?.getInt("tab") ?: prefs.lastTab
         query = savedInstanceState?.getString("query") ?: ""
@@ -407,7 +603,9 @@ class MainActivity : AppCompatActivity() {
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (playerRoot.visibility == View.VISIBLE) {
+                if (::dlPanel.isInitialized && dlPanel.visibility == View.VISIBLE) {
+                    hideDownloads()
+                } else if (playerRoot.visibility == View.VISIBLE) {
                     if (locked) showUnlockBtn()
                     else if (commentsPanel.visibility == View.VISIBLE) hideComments()
                     else if (fullscreen) setFullscreen(false)
@@ -467,7 +665,7 @@ class MainActivity : AppCompatActivity() {
         listFrame.addView(emptyText, FrameLayout.LayoutParams(-1, -1))
         listView.emptyView = emptyText
 
-        ytTab = YoutubeTab(this, { folderPath }, { reloadVideos() }, { openPlayer(it) })
+        ytTab = YoutubeTab(this, { folderPath }, { reloadVideos() }, { openPlayer(it) }, { startDownloadFromUrl(it) })
         ytPanel = ytTab.view
         listFrame.addView(ytPanel, FrameLayout.LayoutParams(-1, -1))
         ytPanel.visibility = if (tab == YT_TAB) View.VISIBLE else View.GONE
@@ -499,6 +697,7 @@ class MainActivity : AppCompatActivity() {
         main.addView(listFrame, LinearLayout.LayoutParams(-1, 0, 1f))
         main.addView(buildBottomNav(), LinearLayout.LayoutParams(-1, dp(68)))
         rootFrame.addView(main, FrameLayout.LayoutParams(-1, -1))
+        buildDownloadsPanel()
 
         buildPlayer()
         playerRoot.layoutDirection = View.LAYOUT_DIRECTION_LTR
@@ -509,6 +708,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(rootFrame)
         applyFont(rootFrame)
         ui.post(ticker)
+        ui.post(dlTicker)
         checkPermissionAndLoad()
     }
 
@@ -610,6 +810,19 @@ class MainActivity : AppCompatActivity() {
         folderBtn.background = null
         folderBtn.setOnClickListener { buzz(it); pickFolderLauncher.launch(null) }
         logo.addView(folderBtn, LinearLayout.LayoutParams(dp(40), dp(40)))
+
+        val dlBox = FrameLayout(this)
+        val dlBtn = ImageButton(this)
+        dlBtn.setImageDrawable(IconDrawable(IconDrawable.DOWNLOAD, navInactive))
+        dlBtn.background = null
+        dlBtn.setOnClickListener { buzz(it); if (dlPanel.visibility == View.VISIBLE) hideDownloads() else showDownloads() }
+        dlBox.addView(dlBtn, FrameLayout.LayoutParams(dp(40), dp(40)))
+        dlBadge = TextView(this)
+        dlBadge.setTextColor(Color.WHITE); dlBadge.textSize = 10f; dlBadge.gravity = Gravity.CENTER
+        dlBadge.background = GradientDrawable().apply { setColor(red); shape = GradientDrawable.OVAL }
+        dlBadge.visibility = View.GONE
+        dlBox.addView(dlBadge, FrameLayout.LayoutParams(dp(16), dp(16), Gravity.TOP or Gravity.END))
+        logo.addView(dlBox, LinearLayout.LayoutParams(dp(40), dp(40)))
 
         top.addView(logo)
 
@@ -1161,18 +1374,44 @@ class MainActivity : AppCompatActivity() {
         showControls()
     }
 
+    private fun setCutoutMode(always: Boolean) {
+        if (Build.VERSION.SDK_INT >= 28) {
+            val lp = window.attributes
+            lp.layoutInDisplayCutoutMode =
+                if (always && Build.VERSION.SDK_INT >= 30) WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                else WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            window.attributes = lp
+        }
+    }
+
     private fun setFullscreen(on: Boolean) {
         fullscreen = on
+        val controller = WindowInsetsControllerCompat(window, window.decorView)
         if (on) {
             requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-            window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+            WindowCompat.setDecorFitsSystemWindows(window, false)
+            setCutoutMode(true)
+            controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+            // الصورة تملأ الشاشة كاملة بلا حواف سوداء
+            aspectLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
             topBar.visibility = View.GONE
             fsBtn.setImageDrawable(IconDrawable(IconDrawable.COMPRESS, Color.WHITE))
         } else {
             requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-            window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+            controller.show(WindowInsetsCompat.Type.systemBars())
+            WindowCompat.setDecorFitsSystemWindows(window, true)
+            setCutoutMode(false)
+            aspectLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
             topBar.visibility = View.VISIBLE
             fsBtn.setImageDrawable(IconDrawable(IconDrawable.EXPAND, Color.WHITE))
+        }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && fullscreen) {
+            WindowInsetsControllerCompat(window, window.decorView).hide(WindowInsetsCompat.Type.systemBars())
         }
     }
 
@@ -1383,6 +1622,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        ui.removeCallbacks(dlTicker)
         pool.shutdown()
         try { contentResolver.unregisterContentObserver(mediaObserver) } catch (_: Exception) {}
         player?.release()
@@ -1411,6 +1651,202 @@ class MainActivity : AppCompatActivity() {
             } else null
         }
         return null
+    }
+
+    // ───────────── التنزيلات ─────────────
+
+    private fun startDownloadFromUrl(url: String?) {
+        if (url == null) return
+        Toast.makeText(this, "جارٍ جلب الجودات المتاحة...", Toast.LENGTH_SHORT).show()
+        pool.execute {
+            try {
+                val info = StreamInfo.getInfo(ServiceList.YouTube, url)
+                val streams = info.videoStreams
+                    .filter { it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP }
+                    .sortedByDescending { it.height }
+                ui.post {
+                    if (isFinishing || isDestroyed) return@post
+                    if (streams.isEmpty()) {
+                        Toast.makeText(this, "لا توجد جودة متاحة للتحميل المباشر لهذا الفيديو", Toast.LENGTH_LONG).show()
+                        return@post
+                    }
+                    val labels = streams.map { "${it.resolution} • ${it.format?.suffix ?: "mp4"}" }.toTypedArray()
+                    AlertDialog.Builder(this)
+                        .setTitle("اختر الجودة")
+                        .setItems(labels) { _, which ->
+                            val st = streams[which]
+                            DownloadCenter.enqueue(info.name, st.content, st.format?.suffix ?: "mp4")
+                            Toast.makeText(this, "بدأ التحميل (${DownloadCenter.SEGMENTS} أجزاء متوازية)", Toast.LENGTH_SHORT).show()
+                            showDownloads()
+                        }
+                        .setNegativeButton("إلغاء", null)
+                        .show()
+                }
+            } catch (e: Exception) {
+                ui.post { Toast.makeText(this, "تعذّر جلب الفيديو: ${e.message}", Toast.LENGTH_LONG).show() }
+            }
+        }
+    }
+
+    private fun buildDownloadsPanel() {
+        dlPanel = LinearLayout(this)
+        dlPanel.orientation = LinearLayout.VERTICAL
+        dlPanel.layoutDirection = View.LAYOUT_DIRECTION_RTL
+        val r = dp(18).toFloat()
+        dlPanel.background = GradientDrawable().apply {
+            setColor(Color.parseColor("#F2151515"))
+            cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
+        }
+        dlPanel.elevation = dp(16).toFloat()
+        dlPanel.isClickable = true
+        dlPanel.visibility = View.GONE
+
+        val head = LinearLayout(this)
+        head.orientation = LinearLayout.HORIZONTAL
+        head.gravity = Gravity.CENTER_VERTICAL
+        head.setPadding(dp(16), dp(12), dp(8), dp(8))
+        val title = TextView(this)
+        title.text = "التنزيلات"; title.setTextColor(Color.WHITE); title.textSize = 16f; title.typeface = fontBold
+        head.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
+        val close = TextView(this)
+        close.text = "✕"; close.setTextColor(Color.WHITE); close.textSize = 18f
+        close.setPadding(dp(12), dp(6), dp(12), dp(6))
+        close.setOnClickListener { buzz(it); hideDownloads() }
+        head.addView(close)
+        dlPanel.addView(head)
+
+        dlEmpty = TextView(this)
+        dlEmpty.text = "لا توجد تنزيلات.\nافتح فيديو في تبويب YouTube ثم اضغط زر التحميل الأحمر."
+        dlEmpty.setTextColor(gray); dlEmpty.textSize = 14f; dlEmpty.gravity = Gravity.CENTER
+        dlEmpty.setPadding(dp(24), dp(24), dp(24), dp(24))
+        dlPanel.addView(dlEmpty, LinearLayout.LayoutParams(-1, -2))
+
+        val scroll = ScrollView(this)
+        dlList = LinearLayout(this)
+        dlList.orientation = LinearLayout.VERTICAL
+        dlList.setPadding(dp(8), 0, dp(8), dp(12))
+        scroll.addView(dlList)
+        dlPanel.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+
+        applyFont(dlPanel)
+        rootFrame.addView(dlPanel, FrameLayout.LayoutParams(-1, (resources.displayMetrics.heightPixels * 0.6f).toInt(), Gravity.BOTTOM))
+    }
+
+    private fun showDownloads() { dlPanel.visibility = View.VISIBLE; refreshDownloads() }
+    private fun hideDownloads() { dlPanel.visibility = View.GONE }
+
+    private fun createDlRow(t: DownloadTask): DlRow {
+        val root = LinearLayout(this)
+        root.orientation = LinearLayout.VERTICAL
+        root.setPadding(dp(12), dp(10), dp(12), dp(10))
+        root.background = GradientDrawable().apply { setColor(Color.parseColor("#1F1F1F")); cornerRadius = dp(12).toFloat() }
+        root.layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, dp(4), 0, dp(4)) }
+
+        val top = LinearLayout(this)
+        top.orientation = LinearLayout.HORIZONTAL
+        top.gravity = Gravity.CENTER_VERTICAL
+        val title = TextView(this)
+        title.text = t.title; title.setTextColor(Color.WHITE); title.textSize = 13f; title.typeface = fontBold
+        title.isSingleLine = true; title.ellipsize = android.text.TextUtils.TruncateAt.END
+        top.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
+        val action = TextView(this)
+        action.setTextColor(Color.WHITE); action.textSize = 12f
+        action.setPadding(dp(12), dp(4), dp(12), dp(4))
+        action.background = GradientDrawable().apply { setColor(Color.parseColor("#44FFFFFF")); cornerRadius = dp(12).toFloat() }
+        action.setOnClickListener {
+            buzz(it)
+            if (t.isActive) DownloadCenter.cancel(t) else { DownloadCenter.remove(t); refreshDownloads() }
+        }
+        top.addView(action, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(8) })
+        root.addView(top)
+
+        val bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal)
+        bar.max = 1000
+        bar.progressTintList = android.content.res.ColorStateList.valueOf(red)
+        bar.indeterminateTintList = android.content.res.ColorStateList.valueOf(red)
+        root.addView(bar, LinearLayout.LayoutParams(-1, dp(6)).apply { topMargin = dp(8) })
+
+        val status = TextView(this)
+        status.setTextColor(gray); status.textSize = 11f
+        status.setPadding(0, dp(6), 0, 0)
+        root.addView(status)
+
+        applyFont(root)
+        return DlRow(root, title, bar, status, action)
+    }
+
+    private fun fmtSize(b: Long): String =
+        if (b >= 1_048_576L) String.format(Locale.US, "%.1f MB", b / 1048576.0)
+        else String.format(Locale.US, "%d KB", b / 1024)
+
+    private fun updateDlRow(r: DlRow, t: DownloadTask) {
+        val done = t.downloaded.get()
+        val total = t.total
+        val now = System.currentTimeMillis()
+        if (t.state == DownloadTask.DOWNLOADING) {
+            if (r.lastTime == 0L) { r.lastTime = now; r.lastBytes = done }
+            else if (now - r.lastTime >= 1000) {
+                r.speed = (done - r.lastBytes) * 1000 / (now - r.lastTime)
+                r.lastBytes = done; r.lastTime = now
+            }
+        }
+        r.action.text = if (t.isActive) "إلغاء" else "إزالة"
+        when (t.state) {
+            DownloadTask.QUEUED -> {
+                r.bar.isIndeterminate = true
+                r.status.text = "جارٍ التحضير..."
+            }
+            DownloadTask.DOWNLOADING -> {
+                val parts = if (t.segments > 1) "${t.segments} أجزاء" else "اتصال واحد"
+                if (total > 0) {
+                    r.bar.isIndeterminate = false
+                    r.bar.progress = (done * 1000 / total).toInt().coerceIn(0, 1000)
+                    r.status.text = "${done * 100 / total}% • ${fmtSize(done)} / ${fmtSize(total)} • ${fmtSize(r.speed)}/ث • $parts"
+                } else {
+                    r.bar.isIndeterminate = true
+                    r.status.text = "${fmtSize(done)} • ${fmtSize(r.speed)}/ث • $parts"
+                }
+            }
+            DownloadTask.SAVING -> {
+                r.bar.isIndeterminate = true
+                r.status.text = "جارٍ الحفظ في المعرض..."
+            }
+            DownloadTask.DONE -> {
+                r.bar.isIndeterminate = false; r.bar.progress = 1000
+                r.status.text = "اكتمل ✓ (Movies/TubeTV)"
+            }
+            DownloadTask.FAILED -> {
+                r.bar.isIndeterminate = false
+                r.status.text = "فشل: ${t.error ?: ""}"
+            }
+            DownloadTask.CANCELED -> {
+                r.bar.isIndeterminate = false
+                r.status.text = "أُلغي"
+            }
+        }
+    }
+
+    private fun refreshDownloads() {
+        val tasks = DownloadCenter.tasks
+        val active = tasks.count { it.isActive }
+        dlBadge.visibility = if (active > 0) View.VISIBLE else View.GONE
+        dlBadge.text = active.toString()
+        if (dlPanel.visibility != View.VISIBLE) return
+
+        for (t in tasks.reversed()) {
+            var row = dlRows[t.id]
+            if (row == null) {
+                row = createDlRow(t)
+                dlRows[t.id] = row
+                dlList.addView(row.root, 0)
+            }
+            updateDlRow(row, t)
+        }
+        val ids = tasks.map { it.id }.toSet()
+        for (id in dlRows.keys.filter { it !in ids }) {
+            dlRows.remove(id)?.let { dlList.removeView(it.root) }
+        }
+        dlEmpty.visibility = if (tasks.isEmpty()) View.VISIBLE else View.GONE
     }
 
     inner class VideoAdapter : BaseAdapter() {
@@ -1577,11 +2013,20 @@ class YoutubeTab(
     private val activity: MainActivity,
     private val getFolderPath: () -> String,
     private val onReload: () -> Unit,
-    private val onPlay: (VideoItem) -> Unit
+    private val onPlay: (VideoItem) -> Unit,
+    private val onDownload: (String?) -> Unit
 ) {
     val view: FrameLayout = FrameLayout(activity)
     private var web: WebView? = null
     private var initialized = false
+    private var fab: ImageButton? = null
+
+    private fun isWatchUrl(url: String?): Boolean =
+        url != null && (url.contains("/watch") || url.contains("youtu.be/") || url.contains("/shorts/"))
+
+    private fun updateFab(url: String?) {
+        fab?.visibility = if (isWatchUrl(url)) View.VISIBLE else View.GONE
+    }
 
     fun isInitialized(): Boolean = initialized
 
@@ -1620,6 +2065,14 @@ class YoutubeTab(
         }
         w.webViewClient = object : WebViewClient() {
             @Suppress("OVERRIDE_DEPRECATION")
+            override fun doUpdateVisitedHistory(v: WebView?, url: String?, isReload: Boolean) {
+                super.doUpdateVisitedHistory(v, url, isReload)
+                updateFab(url)
+            }
+            override fun onPageFinished(v: WebView?, url: String?) {
+                super.onPageFinished(v, url)
+                updateFab(url)
+            }
             override fun shouldOverrideUrlLoading(v: WebView?, url: String?): Boolean {
                 if (url != null && (url.contains("youtube.com/watch") || url.contains("youtu.be/"))) {
                     v?.loadUrl(url)
@@ -1630,5 +2083,18 @@ class YoutubeTab(
         }
         w.loadUrl("https://m.youtube.com")
         view.addView(w, FrameLayout.LayoutParams(-1, -1))
+
+        val d = activity.resources.displayMetrics.density
+        val b = ImageButton(activity)
+        b.setImageDrawable(IconDrawable(IconDrawable.DOWNLOAD, Color.WHITE))
+        b.background = GradientDrawable().apply { setColor(Color.parseColor("#FF0000")); shape = GradientDrawable.OVAL }
+        b.elevation = 8 * d
+        val pad = (15 * d).toInt()
+        b.setPadding(pad, pad, pad, pad)
+        b.visibility = View.GONE
+        b.setOnClickListener { onDownload(w.url) }
+        val m = (16 * d).toInt()
+        view.addView(b, FrameLayout.LayoutParams((56 * d).toInt(), (56 * d).toInt(), Gravity.BOTTOM or Gravity.END).apply { setMargins(m, m, m, m) })
+        fab = b
     }
 }
