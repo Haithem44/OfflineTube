@@ -11,6 +11,7 @@
 
     <application
         android:label="TUBE TV PRO"
+        android:icon="@drawable/icon"
         android:supportsRtl="true"
         android:theme="@style/Theme.AppCompat.NoActionBar"
         android:usesCleartextTraffic="true">
