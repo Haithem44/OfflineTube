@@ -13,25 +13,10 @@ import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.database.ContentObserver
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.ColorFilter
-import android.graphics.LinearGradient
-import android.graphics.Matrix
-import android.graphics.Outline
-import android.graphics.Paint
-import android.graphics.Path
-import android.graphics.PixelFormat
-import android.graphics.RectF
-import android.graphics.Shader
 import android.graphics.Typeface
-import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.LayerDrawable
-import android.media.AudioManager
-import android.media.MediaMetadataRetriever
+import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -42,7 +27,6 @@ import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.text.Editable
 import android.text.TextWatcher
-import android.util.LruCache
 import android.util.Rational
 import android.view.GestureDetector
 import android.view.Gravity
@@ -52,23 +36,16 @@ import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
 import android.view.ViewGroup
-import android.view.ViewOutlineProvider
 import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.LinearInterpolator
 import android.view.inputmethod.InputMethodManager
-import android.webkit.CookieManager
-import android.webkit.WebChromeClient
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import android.widget.BaseAdapter
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.ListView
 import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.SeekBar
@@ -78,385 +55,37 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import androidx.recyclerview.widget.SimpleItemAnimator
+import coil.ImageLoader
+import coil.decode.VideoFrameDecoder
+import coil.memory.MemoryCache
+import org.schabi.newpipe.extractor.MediaFormat as NpFormat
+import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.comments.CommentsInfo
 import org.schabi.newpipe.extractor.comments.CommentsInfoItem
+import org.schabi.newpipe.extractor.stream.DeliveryMethod
+import org.schabi.newpipe.extractor.stream.StreamInfo
 import java.io.File
-import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
-import java.util.concurrent.Executors
-import java.io.IOException
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
-import java.nio.ByteBuffer
-import android.media.MediaCodec
-import android.media.MediaExtractor
-import android.media.MediaMuxer
-import org.schabi.newpipe.extractor.MediaFormat as NpFormat
-import org.schabi.newpipe.extractor.NewPipe
-import org.schabi.newpipe.extractor.downloader.Downloader
-import org.schabi.newpipe.extractor.downloader.Request
-import org.schabi.newpipe.extractor.downloader.Response
-import org.schabi.newpipe.extractor.exceptions.ReCaptchaException
-import java.io.RandomAccessFile
-import java.util.concurrent.CopyOnWriteArrayList
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicLong
-import android.content.ContentValues
-import android.media.MediaScannerConnection
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
-import org.schabi.newpipe.extractor.stream.DeliveryMethod
-import org.schabi.newpipe.extractor.stream.StreamInfo
 
 data class VideoItem(val id: Long, val title: String, val duration: Long, val uri: Uri)
-
-class IconDrawable(private val kind: Int, initial: Int) : Drawable() {
-    companion object {
-        const val HOME = 0; const val SEARCH = 1; const val PLAY = 2; const val REFRESH = 3
-        const val FOLDER = 4; const val TRASH = 5; const val BACK = 6; const val LOCK = 7
-        const val UNLOCK = 8; const val PAUSE = 9; const val PLAY_FILLED = 10; const val EXPAND = 11
-        const val ROTATE = 12; const val PIP = 13; const val COMPRESS = 14; const val COMMENT = 15
-        const val DOWNLOAD = 16
-    }
-
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND
-        strokeJoin = Paint.Join.ROUND; color = initial
-    }
-
-    fun setIconColor(c: Int) { paint.color = c; invalidateSelf() }
-
-    override fun draw(canvas: Canvas) {
-        val b = bounds; val size = minOf(b.width(), b.height()).toFloat()
-        if (size <= 0f) return
-        val s = size / 24f
-        canvas.save()
-        canvas.translate(b.left + (b.width() - size) / 2f, b.top + (b.height() - size) / 2f)
-        canvas.scale(s, s); paint.strokeWidth = 2f; paint.style = Paint.Style.STROKE
-        val p = Path()
-        when (kind) {
-            HOME -> {
-                p.moveTo(3f, 11f); p.lineTo(12f, 3f); p.lineTo(21f, 11f)
-                p.moveTo(5f, 10f); p.lineTo(5f, 20f); p.lineTo(10f, 20f)
-                p.lineTo(10f, 14f); p.lineTo(14f, 14f); p.lineTo(14f, 20f)
-                p.lineTo(19f, 20f); p.lineTo(19f, 10f)
-            }
-            SEARCH -> { canvas.drawCircle(10.5f, 10.5f, 6.5f, paint); p.moveTo(15.3f, 15.3f); p.lineTo(21f, 21f) }
-            PLAY -> { p.moveTo(8f, 5f); p.lineTo(19f, 12f); p.lineTo(8f, 19f); p.close() }
-            REFRESH -> { canvas.drawArc(RectF(4f, 4f, 20f, 20f), 25f, 300f, false, paint); p.moveTo(18.5f, 2.5f); p.lineTo(18.5f, 7.5f); p.lineTo(13.5f, 7.5f) }
-            FOLDER -> { p.moveTo(3f, 6f); p.lineTo(9f, 6f); p.lineTo(11f, 8f); p.lineTo(21f, 8f); p.lineTo(21f, 19f); p.lineTo(3f, 19f); p.close() }
-            TRASH -> {
-                p.moveTo(3.5f, 6f); p.lineTo(20.5f, 6f)
-                p.moveTo(9f, 6f); p.lineTo(9f, 4.5f); p.quadTo(9f, 3.5f, 10f, 3.5f); p.lineTo(14f, 3.5f); p.quadTo(15f, 3.5f, 15f, 4.5f); p.lineTo(15f, 6f)
-                p.moveTo(5.5f, 6f); p.lineTo(6.4f, 19.2f); p.quadTo(6.5f, 20.5f, 7.8f, 20.5f); p.lineTo(16.2f, 20.5f); p.quadTo(17.5f, 20.5f, 17.6f, 19.2f); p.lineTo(18.5f, 6f)
-                p.moveTo(10f, 10f); p.lineTo(10f, 16.5f)
-                p.moveTo(14f, 10f); p.lineTo(14f, 16.5f)
-            }
-            BACK -> { p.moveTo(20f, 12f); p.lineTo(4f, 12f); p.moveTo(10f, 6f); p.lineTo(4f, 12f); p.lineTo(10f, 18f) }
-            LOCK -> { canvas.drawRoundRect(RectF(5f, 11f, 19f, 21f), 2f, 2f, paint); p.moveTo(8f, 11f); p.lineTo(8f, 8f); p.arcTo(RectF(8f, 4f, 16f, 12f), 180f, 180f); p.lineTo(16f, 11f) }
-            UNLOCK -> { canvas.drawRoundRect(RectF(5f, 11f, 19f, 21f), 2f, 2f, paint); p.moveTo(8f, 11f); p.lineTo(8f, 8f); p.arcTo(RectF(8f, 4f, 16f, 12f), 180f, 180f) }
-            PAUSE -> { paint.style = Paint.Style.FILL; canvas.drawRoundRect(RectF(6f, 4f, 10.5f, 20f), 1.5f, 1.5f, paint); canvas.drawRoundRect(RectF(13.5f, 4f, 18f, 20f), 1.5f, 1.5f, paint); paint.style = Paint.Style.STROKE }
-            PLAY_FILLED -> { paint.style = Paint.Style.FILL; p.moveTo(7f, 4.5f); p.lineTo(19f, 12f); p.lineTo(7f, 19.5f); p.close(); canvas.drawPath(p, paint); p.reset(); paint.style = Paint.Style.STROKE }
-            EXPAND -> { p.moveTo(4f, 9f); p.lineTo(4f, 4f); p.lineTo(9f, 4f); p.moveTo(15f, 4f); p.lineTo(20f, 4f); p.lineTo(20f, 9f); p.moveTo(20f, 15f); p.lineTo(20f, 20f); p.lineTo(15f, 20f); p.moveTo(9f, 20f); p.lineTo(4f, 20f); p.lineTo(4f, 15f) }
-            ROTATE -> { canvas.drawRoundRect(RectF(3f, 6f, 21f, 18f), 2.5f, 2.5f, paint); p.moveTo(18f, 10f); p.lineTo(18f, 14f) }
-            PIP -> { canvas.drawRoundRect(RectF(3f, 5f, 21f, 19f), 2f, 2f, paint); paint.style = Paint.Style.FILL; canvas.drawRoundRect(RectF(12f, 11f, 19f, 17f), 1f, 1f, paint); paint.style = Paint.Style.STROKE }
-            COMPRESS -> { p.moveTo(9f, 4f); p.lineTo(9f, 9f); p.lineTo(4f, 9f); p.moveTo(15f, 4f); p.lineTo(15f, 9f); p.lineTo(20f, 9f); p.moveTo(20f, 15f); p.lineTo(15f, 15f); p.lineTo(15f, 20f); p.moveTo(4f, 15f); p.lineTo(9f, 15f); p.lineTo(9f, 20f) }
-            COMMENT -> { canvas.drawRoundRect(RectF(3f, 4f, 21f, 17f), 3f, 3f, paint); p.moveTo(8f, 17f); p.lineTo(8f, 21f); p.lineTo(12.5f, 17f) }
-            DOWNLOAD -> { p.moveTo(12f, 4f); p.lineTo(12f, 15f); p.moveTo(7f, 10.5f); p.lineTo(12f, 15.5f); p.lineTo(17f, 10.5f); p.moveTo(5f, 19.5f); p.lineTo(19f, 19.5f) }
-        }
-        canvas.drawPath(p, paint); canvas.restore()
-    }
-
-    override fun setAlpha(alpha: Int) { paint.alpha = alpha; invalidateSelf() }
-    override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter; invalidateSelf() }
-    @Suppress("DEPRECATION")
-    override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
-}
-
-/** Downloader مطلوب لتهيئة NewPipe قبل أي استخراج (جلب الجودات والتعليقات). */
-class SimpleDownloader : Downloader() {
-    override fun execute(request: Request): Response {
-        val conn = URL(request.url()).openConnection() as HttpURLConnection
-        try {
-            conn.connectTimeout = 20000
-            conn.readTimeout = 20000
-            conn.requestMethod = request.httpMethod()
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; rv:128.0) Gecko/20100101 Firefox/128.0")
-            for ((k, values) in request.headers()) {
-                if (k.equals("Accept-Encoding", true)) continue
-                conn.setRequestProperty(k, values.joinToString(", "))
-            }
-            val data = request.dataToSend()
-            if (data != null) {
-                conn.doOutput = true
-                conn.outputStream.use { it.write(data) }
-            }
-            val code = conn.responseCode
-            if (code == 429) throw ReCaptchaException("reCaptcha Challenge requested", request.url())
-            val stream = if (code >= 400) conn.errorStream else conn.inputStream
-            val body = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
-            val headers = HashMap<String, List<String>>()
-            for ((k, v) in conn.headerFields) { if (k != null) headers[k] = v }
-            return Response(code, conn.responseMessage, headers, body, conn.url.toString())
-        } finally {
-            conn.disconnect()
-        }
-    }
-}
-
-class DownloadTask(val id: Int, val title: String, val url: String, val fileName: String, val audioUrl: String? = null) {
-    companion object {
-        const val QUEUED = 0; const val DOWNLOADING = 1; const val SAVING = 2
-        const val DONE = 3; const val FAILED = 4; const val CANCELED = 5
-    }
-    @Volatile var state = QUEUED
-    @Volatile var total = -1L
-    @Volatile var segments = 1
-    @Volatile var error: String? = null
-    val downloaded = AtomicLong(0L)
-    val abort = AtomicBoolean(false)
-    val cancelled = AtomicBoolean(false)
-    val isActive: Boolean get() = state == QUEUED || state == DOWNLOADING || state == SAVING
-}
-
-/** مدير تنزيل على مستوى التطبيق: عدة فيديوهات معًا، وكل فيديو يُقسَّم إلى 6 أجزاء متوازية. */
-object DownloadCenter {
-    const val SEGMENTS = 6
-    private const val UA = "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36"
-    private val executor = Executors.newCachedThreadPool()
-    private var appCtx: Context? = null
-    private var nextId = 1
-    val tasks = CopyOnWriteArrayList<DownloadTask>()
-
-    fun init(ctx: Context) { if (appCtx == null) appCtx = ctx.applicationContext }
-
-    @Synchronized
-    fun enqueue(title: String, url: String, ext: String, audioUrl: String? = null): DownloadTask {
-        val safe = title.replace(Regex("[\\\\/:*?\"<>|\\n\\r]"), "_").trim().take(80).ifEmpty { "video" }
-        val t = DownloadTask(nextId++, title, url, "$safe.$ext", audioUrl)
-        tasks.add(0, t)
-        executor.execute { process(t) }
-        return t
-    }
-
-    fun cancel(t: DownloadTask) { t.cancelled.set(true); t.abort.set(true) }
-    fun remove(t: DownloadTask) { if (!t.isActive) tasks.remove(t) }
-
-    private fun fail(t: DownloadTask, e: Exception) {
-        if (t.cancelled.get()) return
-        if (t.abort.compareAndSet(false, true)) t.error = e.message ?: e.javaClass.simpleName
-    }
-
-    private fun fetchFile(t: DownloadTask, url: String, tmp: File, total: Long, ranges: Boolean) {
-        if (ranges && total > 1_000_000L) {
-            t.segments = SEGMENTS
-            RandomAccessFile(tmp, "rw").use { it.setLength(total) }
-            val part = total / SEGMENTS
-            val futures = (0 until SEGMENTS).map { i ->
-                val start = i * part
-                val end = if (i == SEGMENTS - 1) total - 1 else start + part - 1
-                executor.submit {
-                    try { downloadRange(t, url, tmp, start, end) } catch (e: Exception) { fail(t, e) }
-                }
-            }
-            futures.forEach { try { it.get() } catch (_: Exception) {} }
-        } else {
-            t.segments = 1
-            try { downloadRange(t, url, tmp, 0L, -1L) } catch (e: Exception) { fail(t, e) }
-        }
-    }
-
-    private fun process(t: DownloadTask) {
-        val ctx = appCtx ?: return
-        val stamp = System.currentTimeMillis()
-        val vTmp = File(ctx.cacheDir, "dl_${t.id}_${stamp}_v.part")
-        val aTmp = File(ctx.cacheDir, "dl_${t.id}_${stamp}_a.part")
-        val oTmp = File(ctx.cacheDir, "dl_${t.id}_${stamp}_o.mp4")
-        try {
-            val v = probe(t.url)
-            val a = if (t.audioUrl != null) probe(t.audioUrl) else null
-            t.total = if (v.first > 0 && (a == null || a.first > 0)) v.first + (a?.first ?: 0L) else -1L
-            t.state = DownloadTask.DOWNLOADING
-
-            fetchFile(t, t.url, vTmp, v.first, v.second)
-            if (a != null && !t.abort.get()) fetchFile(t, t.audioUrl!!, aTmp, a.first, a.second)
-
-            if (t.cancelled.get()) { t.state = DownloadTask.CANCELED; return }
-            if (t.abort.get()) { t.state = DownloadTask.FAILED; return }
-
-            t.state = DownloadTask.SAVING
-            val finalFile = if (a != null) { mux(vTmp, aTmp, oTmp); oTmp } else vTmp
-            saveToGallery(ctx, t, finalFile)
-            t.state = DownloadTask.DONE
-        } catch (e: Exception) {
-            if (t.cancelled.get()) t.state = DownloadTask.CANCELED
-            else { t.error = e.message ?: e.javaClass.simpleName; t.state = DownloadTask.FAILED }
-        } finally {
-            vTmp.delete(); aTmp.delete(); oTmp.delete()
-        }
-    }
-
-    /** دمج مسار الفيديو مع مسار الصوت في ملف MP4 واحد */
-    private fun mux(video: File, audio: File, out: File) {
-        val vEx = MediaExtractor()
-        val aEx = MediaExtractor()
-        var muxer: MediaMuxer? = null
-        try {
-            vEx.setDataSource(video.path)
-            aEx.setDataSource(audio.path)
-            val vi = findTrack(vEx, "video/")
-            val ai = findTrack(aEx, "audio/")
-            if (vi < 0 || ai < 0) throw IOException("تعذّر دمج الصوت والصورة (صيغة غير مدعومة)")
-            vEx.selectTrack(vi); aEx.selectTrack(ai)
-            muxer = MediaMuxer(out.path, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-            val vt = muxer.addTrack(vEx.getTrackFormat(vi))
-            val at = muxer.addTrack(aEx.getTrackFormat(ai))
-            muxer.start()
-            copyTrack(vEx, muxer, vt)
-            copyTrack(aEx, muxer, at)
-            muxer.stop()
-        } finally {
-            try { vEx.release() } catch (_: Exception) {}
-            try { aEx.release() } catch (_: Exception) {}
-            try { muxer?.release() } catch (_: Exception) {}
-        }
-    }
-
-    private fun findTrack(ex: MediaExtractor, prefix: String): Int {
-        for (i in 0 until ex.trackCount) {
-            if (ex.getTrackFormat(i).getString(android.media.MediaFormat.KEY_MIME)?.startsWith(prefix) == true) return i
-        }
-        return -1
-    }
-
-    private fun copyTrack(ex: MediaExtractor, muxer: MediaMuxer, track: Int) {
-        val buf = ByteBuffer.allocate(4 * 1024 * 1024)
-        val info = MediaCodec.BufferInfo()
-        while (true) {
-            buf.clear()
-            val size = ex.readSampleData(buf, 0)
-            if (size < 0) break
-            val flags = if (ex.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC != 0) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
-            info.set(0, size, ex.sampleTime, flags)
-            muxer.writeSampleData(track, buf, info)
-            ex.advance()
-        }
-    }
-
-    /** يرجع (الحجم الكلي، هل الخادم يدعم Range) */
-    private fun probe(url: String): Pair<Long, Boolean> {
-        val c = URL(url).openConnection() as HttpURLConnection
-        try {
-            c.connectTimeout = 15000; c.readTimeout = 15000
-            c.setRequestProperty("User-Agent", UA)
-            c.setRequestProperty("Range", "bytes=0-0")
-            c.connect()
-            val code = c.responseCode
-            if (code == 206) {
-                val total = c.getHeaderField("Content-Range")?.substringAfterLast('/')?.trim()?.toLongOrNull() ?: -1L
-                if (total > 0) return Pair(total, true)
-            }
-            if (code in 200..299) return Pair(c.contentLengthLong, false)
-            throw IOException("HTTP $code")
-        } finally { c.disconnect() }
-    }
-
-    private fun downloadRange(t: DownloadTask, url: String, file: File, start: Long, end: Long) {
-        var pos = start
-        var attempt = 0
-        while (!t.abort.get()) {
-            var conn: HttpURLConnection? = null
-            try {
-                conn = URL(url).openConnection() as HttpURLConnection
-                conn.connectTimeout = 15000; conn.readTimeout = 20000
-                conn.setRequestProperty("User-Agent", UA)
-                if (end >= 0) conn.setRequestProperty("Range", "bytes=$pos-$end")
-                conn.connect()
-                val code = conn.responseCode
-                if (end >= 0 && code != 206) throw IOException("HTTP $code")
-                if (end < 0 && code !in 200..299) throw IOException("HTTP $code")
-                conn.inputStream.use { input ->
-                    RandomAccessFile(file, "rw").use { raf ->
-                        raf.seek(pos)
-                        val buf = ByteArray(64 * 1024)
-                        while (true) {
-                            if (t.abort.get()) return
-                            val n = input.read(buf)
-                            if (n < 0) break
-                            raf.write(buf, 0, n)
-                            pos += n
-                            t.downloaded.addAndGet(n.toLong())
-                        }
-                    }
-                }
-                if (end < 0 || pos > end) return
-                throw IOException("انقطع الاتصال")
-            } catch (e: Exception) {
-                if (t.abort.get()) return
-                if (end < 0 || ++attempt >= 4) throw e
-                Thread.sleep(1000L * attempt)
-            } finally {
-                conn?.disconnect()
-            }
-        }
-    }
-
-    private fun saveToGallery(ctx: Context, t: DownloadTask, src: File) {
-        val mime = if (t.fileName.endsWith(".webm")) "video/webm" else "video/mp4"
-        if (Build.VERSION.SDK_INT >= 29) {
-            val values = ContentValues().apply {
-                put(MediaStore.Video.Media.DISPLAY_NAME, t.fileName)
-                put(MediaStore.Video.Media.MIME_TYPE, mime)
-                put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/TubeTV")
-                put(MediaStore.Video.Media.IS_PENDING, 1)
-            }
-            val coll = MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-            val uri = ctx.contentResolver.insert(coll, values) ?: throw IOException("تعذّر إنشاء الملف")
-            val out = ctx.contentResolver.openOutputStream(uri) ?: throw IOException("تعذّر فتح الملف للكتابة")
-            out.use { o -> src.inputStream().use { it.copyTo(o, 256 * 1024) } }
-            values.clear(); values.put(MediaStore.Video.Media.IS_PENDING, 0)
-            ctx.contentResolver.update(uri, values, null, null)
-        } else {
-            val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES), "TubeTV")
-            dir.mkdirs()
-            var dest = File(dir, t.fileName)
-            var n = 1
-            while (dest.exists()) { dest = File(dir, t.fileName.substringBeforeLast('.') + " ($n)." + t.fileName.substringAfterLast('.')); n++ }
-            src.copyTo(dest, overwrite = true)
-            MediaScannerConnection.scanFile(ctx, arrayOf(dest.path), arrayOf(mime), null)
-        }
-    }
-}
-
-class ShimmerView(ctx: Context) : View(ctx) {
-    private val paint = Paint(); private val shMatrix = Matrix()
-    private var shader: LinearGradient? = null; private var phase = -1f
-    private val anim = ValueAnimator.ofFloat(-1f, 1f).apply {
-        duration = 1300; repeatCount = ValueAnimator.INFINITE; interpolator = LinearInterpolator()
-        addUpdateListener { phase = it.animatedValue as Float; invalidate() }
-    }
-    override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
-        super.onSizeChanged(w, h, ow, oh)
-        shader = LinearGradient(0f, 0f, w.toFloat(), 0f, intArrayOf(Color.parseColor("#1F1F1F"), Color.parseColor("#363636"), Color.parseColor("#1F1F1F")), floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP)
-        paint.shader = shader
-    }
-    override fun onAttachedToWindow() { super.onAttachedToWindow(); anim.start() }
-    override fun onDetachedFromWindow() { anim.cancel(); super.onDetachedFromWindow() }
-    override fun onDraw(c: Canvas) {
-        shMatrix.setTranslate(phase * width, 0f); shader?.setLocalMatrix(shMatrix)
-        c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
-    }
-}
 
 class MainActivity : AppCompatActivity() {
 
@@ -465,6 +94,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private lateinit var prefs: Prefs
+    private val store by lazy { PositionStore(this) }
     private val bg = Color.parseColor("#0F0F0F")
     private val red = Color.parseColor("#FF0000")
     private val gray = Color.parseColor("#AAAAAA")
@@ -475,7 +105,7 @@ class MainActivity : AppCompatActivity() {
     private val shown = ArrayList<VideoItem>()
     private val expandedCommentIds = HashSet<Long>()
 
-    private lateinit var listView: ListView
+    private lateinit var recycler: RecyclerView
     private lateinit var adapter: VideoAdapter
     private lateinit var continueHeader: LinearLayout
     private lateinit var logo: LinearLayout
@@ -528,8 +158,6 @@ class MainActivity : AppCompatActivity() {
     private val navRefs = ArrayList<NavRef>()
 
     private val pool = Executors.newFixedThreadPool(3)
-    // خيوط مستقلة للصور المصغّرة حتى لا تؤخّر التحديث
-    private val thumbPool = Executors.newFixedThreadPool(2)
     private val ui = Handler(Looper.getMainLooper())
 
     private var loadGen = 0
@@ -537,8 +165,6 @@ class MainActivity : AppCompatActivity() {
     private var refreshManual = true
     private var shuffleNext = false
     private val shuffleRank = HashMap<Long, Int>()
-    // الصور المنتظَرة لكل فيديو (تُستخدم من الخيط الرئيسي فقط) لمنع تكرار العمل
-    private val thumbWaiters = HashMap<Long, MutableList<ImageView>>()
 
     private val observerReload = Runnable {
         if (!refreshing && playerRoot.visibility != View.VISIBLE) loadVideos()
@@ -552,18 +178,12 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private val cache = object : LruCache<Long, Bitmap>((Runtime.getRuntime().maxMemory() / 1024 / 6).toInt()) {
-        override fun sizeOf(key: Long, value: Bitmap): Int = value.byteCount / 1024
-    }
-
-    private val thumbW: Int by lazy { maxOf(resources.displayMetrics.widthPixels, 1080).coerceAtMost(2160) }
-    private val thumbH: Int by lazy { thumbW * 9 / 16 }
-    private val thumbDir: File by lazy {
-        try {
-            File(cacheDir, "thumbs_hq_v2").deleteRecursively()
-            File(cacheDir, "thumbs_hq_v3").deleteRecursively()
-        } catch (_: Exception) {}
-        File(cacheDir, "thumbs_hq_v4").apply { mkdirs() }
+    // Coil: يستخرج إطار الفيديو كصورة مصغّرة ويخزّنها في الذاكرة
+    private val imageLoader: ImageLoader by lazy {
+        ImageLoader.Builder(this)
+            .components { add(VideoFrameDecoder.Factory()) }
+            .memoryCache { MemoryCache.Builder(this).maxSizePercent(0.25).build() }
+            .build()
     }
 
     private fun loadFont(name: String): Typeface? {
@@ -623,7 +243,6 @@ class MainActivity : AppCompatActivity() {
     private val speeds = floatArrayOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
     private var speedIdx = 2
     private var gestureMode = 0
-    private val audio by lazy { getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     private val hideHud = Runnable { hudText.visibility = View.GONE }
     private val hideUnlock = Runnable { if (locked) unlockBtn.visibility = View.GONE }
 
@@ -658,7 +277,7 @@ class MainActivity : AppCompatActivity() {
             if (dur == C.TIME_UNSET || dur <= 0) return
             val ended = p.playbackState == Player.STATE_ENDED
             val pos = if (ended) 0L else p.currentPosition
-            prefs.savePosition(c.id, pos, dur, ended)
+            store.save(c.id, pos, ended)
         } catch (_: Exception) {}
     }
 
@@ -762,23 +381,27 @@ class MainActivity : AppCompatActivity() {
         main.addView(buildTopBlock())
         main.addView(buildTabs(), LinearLayout.LayoutParams(-1, -2))
 
-        listView = ListView(this)
-        listView.divider = null
-        listView.dividerHeight = 0
-        listView.setPadding(0, 0, 0, 0)
-        listView.clipToPadding = false
-        listView.setBackgroundColor(bg)
+        // ── القائمة: RecyclerView + ViewHolder + DiffUtil ──
+        recycler = RecyclerView(this).apply {
+            layoutManager = LinearLayoutManager(this@MainActivity)
+            setBackgroundColor(bg)
+            clipToPadding = false
+            (itemAnimator as? SimpleItemAnimator)?.supportsChangeAnimations = false
+        }
+        val style = VideoAdapter.Style(
+            fontBold, fontRegular, red, gray,
+            resources.displayMetrics.density, resources.displayMetrics.widthPixels
+        )
+        adapter = VideoAdapter(style, imageLoader, { openPlayer(it) }, { showDeleteDialog(it) })
+        recycler.adapter = adapter
 
         continueHeader = LinearLayout(this)
         continueHeader.orientation = LinearLayout.VERTICAL
-        listView.addHeaderView(continueHeader, null, false)
 
-        adapter = VideoAdapter()
-        listView.adapter = adapter
-        listView.setOnItemClickListener { _, _, pos, _ ->
-            val idx = pos - listView.headerViewsCount
-            if (idx in 0 until shown.size) openPlayer(shown[idx])
-        }
+        val listColumn = LinearLayout(this)
+        listColumn.orientation = LinearLayout.VERTICAL
+        listColumn.addView(continueHeader, LinearLayout.LayoutParams(-1, -2))
+        listColumn.addView(recycler, LinearLayout.LayoutParams(-1, 0, 1f))
 
         emptyText = TextView(this)
         emptyText.text = "جارٍ تحميل الفيديوهات..."
@@ -788,9 +411,8 @@ class MainActivity : AppCompatActivity() {
         emptyText.setPadding(dp(24), dp(24), dp(24), dp(24))
 
         val listFrame = FrameLayout(this)
-        listFrame.addView(listView, FrameLayout.LayoutParams(-1, -1))
+        listFrame.addView(listColumn, FrameLayout.LayoutParams(-1, -1))
         listFrame.addView(emptyText, FrameLayout.LayoutParams(-1, -1))
-        listView.emptyView = emptyText
 
         ytTab = YoutubeTab(this, { folderPath }, { reloadVideos() }, { openPlayer(it) }, { startDownloadFromUrl(it) })
         ytPanel = ytTab.view
@@ -809,12 +431,11 @@ class MainActivity : AppCompatActivity() {
         refreshBar.visibility = View.GONE
         listFrame.addView(refreshBar, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(10) })
 
-        listView.setOnTouchListener { _, e ->
+        recycler.setOnTouchListener { _, e ->
             when (e.action) {
                 MotionEvent.ACTION_DOWN -> { touchStartY = e.y; pulling = false }
                 MotionEvent.ACTION_MOVE -> {
-                    val atTop = listView.childCount == 0 || (listView.firstVisiblePosition == 0 && listView.getChildAt(0).top >= 0)
-                    if (atTop && !refreshing && e.y - touchStartY > dp(120)) pulling = true
+                    if (!recycler.canScrollVertically(-1) && !refreshing && e.y - touchStartY > dp(120)) pulling = true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { if (pulling) { pulling = false; reloadVideos() } }
             }
@@ -836,7 +457,19 @@ class MainActivity : AppCompatActivity() {
         applyFont(rootFrame)
         ui.post(ticker)
         ui.post(dlTicker)
-        checkPermissionAndLoad()
+
+        // Room لا يسمح بالاستعلام على الخيط الرئيسي: نحمّل المواضع أولًا ثم نبدأ تحميل الفيديوهات
+        pool.execute {
+            try {
+                listOf("thumbs_hq_v2", "thumbs_hq_v3", "thumbs_hq_v4").forEach { File(cacheDir, it).deleteRecursively() }
+            } catch (_: Exception) {}
+            try { store.load() } catch (_: Exception) {}
+            ui.post {
+                if (isFinishing || isDestroyed) return@post
+                applyFilter()
+                checkPermissionAndLoad()
+            }
+        }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -877,23 +510,6 @@ class MainActivity : AppCompatActivity() {
         ui.postDelayed({ splash.animate().alpha(0f).setDuration(350).withEndAction { rootFrame.removeView(splash) }.start() }, 900)
     }
 
-    private fun raised(top: Int, bottom: Int, radius: Int, pressed: Boolean = false): Drawable {
-        val r = dp(radius).toFloat()
-        val shadow = GradientDrawable().apply { setColor(Color.parseColor("#66000000")); cornerRadius = r }
-        val edge = GradientDrawable().apply { setColor(Color.parseColor("#33FFFFFF")); cornerRadius = r }
-        val face = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, if (pressed) intArrayOf(bottom, top) else intArrayOf(top, bottom)).apply { cornerRadius = r }
-        val layers = LayerDrawable(arrayOf<Drawable>(shadow, edge, face))
-        layers.setLayerInset(0, 0, dp(4), 0, 0); layers.setLayerInset(1, 0, 0, 0, dp(3))
-        layers.setLayerInset(2, dp(1), dp(1), dp(1), if (pressed) dp(3) else dp(4))
-        return layers
-    }
-
-    private fun setBgKeepPad(v: View, d: Drawable) {
-        val l = v.paddingLeft; val t = v.paddingTop
-        val r = v.paddingRight; val b = v.paddingBottom
-        v.background = d; v.setPadding(l, t, r, b)
-    }
-
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     private fun fmt(ms: Long): String {
@@ -929,6 +545,7 @@ class MainActivity : AppCompatActivity() {
         val refreshBtn = ImageButton(this)
         refreshBtn.setImageDrawable(IconDrawable(IconDrawable.REFRESH, navInactive))
         refreshBtn.background = null
+        refreshBtn.contentDescription = "تحديث"
         refreshBtn.setOnClickListener { buzz(it); reloadVideos() }
         logo.addView(refreshBtn, LinearLayout.LayoutParams(dp(40), dp(40)))
         refreshViews.add(refreshBtn)
@@ -936,6 +553,7 @@ class MainActivity : AppCompatActivity() {
         val folderBtn = ImageButton(this)
         folderBtn.setImageDrawable(IconDrawable(IconDrawable.FOLDER, navInactive))
         folderBtn.background = null
+        folderBtn.contentDescription = "اختيار مجلد"
         folderBtn.setOnClickListener { buzz(it); pickFolderLauncher.launch(null) }
         logo.addView(folderBtn, LinearLayout.LayoutParams(dp(40), dp(40)))
 
@@ -943,6 +561,7 @@ class MainActivity : AppCompatActivity() {
         val dlBtn = ImageButton(this)
         dlBtn.setImageDrawable(IconDrawable(IconDrawable.DOWNLOAD, navInactive))
         dlBtn.background = null
+        dlBtn.contentDescription = "التنزيلات"
         dlBtn.setOnClickListener { buzz(it); if (dlPanel.visibility == View.VISIBLE) hideDownloads() else showDownloads() }
         dlBox.addView(dlBtn, FrameLayout.LayoutParams(dp(40), dp(40)))
         dlBadge = TextView(this)
@@ -1110,16 +729,17 @@ class MainActivity : AppCompatActivity() {
         val base = if (q.isEmpty()) all else all.filter { it.title.lowercase(Locale.getDefault()).contains(q) }
         when (tab) {
             0 -> shown.addAll(base)
-            1 -> shown.addAll(base.filter { val pos = prefs.getPosition(it.id); pos > 0L && pos < it.duration })
+            1 -> shown.addAll(base.filter { val pos = store.getPosition(it.id); pos > 0L && pos < it.duration })
             2 -> shown.addAll(base.sortedByDescending { it.duration })
-            3 -> shown.addAll(base.filter { prefs.isWatched(it.id) })
+            3 -> shown.addAll(base.filter { store.isWatched(it.id) })
             4 -> shown.addAll(base.filter { it.duration in 1L..60_000L })
         }
         updateContinueHeader()
-        adapter.notifyDataSetChanged()
+        adapter.submitList(shown.map { VideoRow(it, store.getPosition(it.id)) })
         emptyText.text = if (shown.isEmpty()) {
             if (tab == 1) "لا توجد فيديوهات قيد المشاهدة" else "لا توجد فيديوهات"
         } else ""
+        emptyText.visibility = if (shown.isEmpty()) View.VISIBLE else View.GONE
         updateNavForTab()
     }
 
@@ -1205,7 +825,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun afterDeleted(v: VideoItem) {
         all.removeAll { it.id == v.id }
-        prefs.removePosition(v.id)
+        store.remove(v.id)
         applyFilter()
     }
 
@@ -1259,11 +879,7 @@ class MainActivity : AppCompatActivity() {
         pool.execute {
             val result = ArrayList<VideoItem>()
             try {
-                val collection = if (Build.VERSION.SDK_INT >= 29) {
-                    MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
-                } else {
-                    MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-                }
+                val collection = videoCollection()
                 val proj = arrayOf(MediaStore.Video.Media._ID, MediaStore.Video.Media.TITLE, MediaStore.Video.Media.DURATION)
                 val sort = MediaStore.Video.Media.DATE_ADDED + " DESC"
 
@@ -1294,12 +910,12 @@ class MainActivity : AppCompatActivity() {
                 // يبقى الخلط ثابتًا في التحديثات التلقائية؛ والفيديو الجديد يظهر في الأعلى
                 val ordered: List<VideoItem> =
                     if (shuffleRank.isEmpty()) result else result.sortedBy { shuffleRank[it.id] ?: -1 }
-                // لا نعيد بناء القائمة إن لم يتغير شيء (يمنع الوميض وإعادة تحميل الصور)
+                // لا نعيد بناء القائمة إن لم يتغير شيء (يمنع الوميض)
                 if (!loadedOnce || ordered != all) {
                     all.clear(); all.addAll(ordered)
                     loadedOnce = true
                     applyFilter()
-                    if (didShuffle) listView.setSelection(0)
+                    if (didShuffle) recycler.scrollToPosition(0)
                 }
                 if (refreshing) {
                     refreshing = false
@@ -1360,6 +976,7 @@ class MainActivity : AppCompatActivity() {
         val backBtn = ImageButton(this)
         backBtn.setImageDrawable(IconDrawable(IconDrawable.BACK, Color.WHITE))
         backBtn.background = null
+        backBtn.contentDescription = "رجوع"
         backBtn.setOnClickListener { buzz(it); closePlayer() }
         topBar.addView(backBtn, LinearLayout.LayoutParams(dp(40), dp(40)))
 
@@ -1372,6 +989,7 @@ class MainActivity : AppCompatActivity() {
         unlockBtn.setImageDrawable(IconDrawable(IconDrawable.UNLOCK, Color.WHITE))
         unlockBtn.background = null
         unlockBtn.visibility = View.GONE
+        unlockBtn.contentDescription = "فتح القفل"
         unlockBtn.setOnClickListener { buzz(it); unlockPlayer() }
         topBar.addView(unlockBtn, LinearLayout.LayoutParams(dp(40), dp(40)))
 
@@ -1388,6 +1006,7 @@ class MainActivity : AppCompatActivity() {
         rewind.setImageDrawable(IconDrawable(IconDrawable.ROTATE, Color.WHITE))
         rewind.background = null
         rewind.scaleX = -1f
+        rewind.contentDescription = "رجوع 10 ثوانٍ"
         rewind.setOnClickListener { buzz(it); player?.seekBack(); showControls() }
         midRow.addView(rewind, LinearLayout.LayoutParams(dp(48), dp(48)).apply { marginEnd = dp(30) })
 
@@ -1395,12 +1014,14 @@ class MainActivity : AppCompatActivity() {
         playPause.setImageDrawable(pauseDrawable)
         playPause.background = GradientDrawable().apply { setColor(Color.parseColor("#55000000")); shape = GradientDrawable.OVAL }
         playPause.setPadding(dp(14), dp(14), dp(14), dp(14))
+        playPause.contentDescription = "تشغيل / إيقاف مؤقت"
         playPause.setOnClickListener { buzz(it); togglePlay() }
         midRow.addView(playPause, LinearLayout.LayoutParams(dp(72), dp(72)))
 
         val forward = ImageButton(this)
         forward.setImageDrawable(IconDrawable(IconDrawable.ROTATE, Color.WHITE))
         forward.background = null
+        forward.contentDescription = "تقديم 10 ثوانٍ"
         forward.setOnClickListener { buzz(it); player?.seekForward(); showControls() }
         midRow.addView(forward, LinearLayout.LayoutParams(dp(48), dp(48)).apply { marginStart = dp(30) })
 
@@ -1442,6 +1063,7 @@ class MainActivity : AppCompatActivity() {
         fsBtn = ImageButton(this)
         fsBtn.setImageDrawable(IconDrawable(IconDrawable.EXPAND, Color.WHITE))
         fsBtn.background = null
+        fsBtn.contentDescription = "ملء الشاشة"
         fsBtn.setOnClickListener { buzz(it); setFullscreen(!fullscreen) }
         timeRow.addView(fsBtn, LinearLayout.LayoutParams(dp(36), dp(36)).apply { marginStart = dp(4) })
 
@@ -1487,6 +1109,7 @@ class MainActivity : AppCompatActivity() {
         val closeC = ImageButton(this)
         closeC.setImageDrawable(IconDrawable(IconDrawable.BACK, Color.WHITE))
         closeC.background = null
+        closeC.contentDescription = "إغلاق التعليقات"
         closeC.setOnClickListener { hideComments() }
         cHead.addView(closeC, LinearLayout.LayoutParams(dp(40), dp(40)))
 
@@ -1692,7 +1315,7 @@ class MainActivity : AppCompatActivity() {
         p.clearMediaItems()
         p.setMediaItem(MediaItem.fromUri(v.uri))
 
-        val savedPos = prefs.getPosition(v.id)
+        val savedPos = store.getPosition(v.id)
         p.prepare()
         p.playWhenReady = true
         if (savedPos > 0L) {
@@ -1872,13 +1495,13 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         ui.removeCallbacks(dlTicker)
+        ui.removeCallbacks(ticker)
         pool.shutdown()
-        thumbPool.shutdown()
         ui.removeCallbacks(observerReload)
         try { contentResolver.unregisterContentObserver(mediaObserver) } catch (_: Exception) {}
         player?.release()
         player = null
-        cache.evictAll()
+        ytTab.onDestroy()
     }
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
@@ -1897,6 +1520,7 @@ class MainActivity : AppCompatActivity() {
             val parts = docId.split(":")
             return if (parts.size >= 2) {
                 val type = parts[0]; val path = parts[1]
+                @Suppress("DEPRECATION")
                 if (type == "primary") Environment.getExternalStorageDirectory().path + "/" + path
                 else "/storage/$type/$path"
             } else null
@@ -1989,6 +1613,7 @@ class MainActivity : AppCompatActivity() {
         val close = TextView(this)
         close.text = "✕"; close.setTextColor(Color.WHITE); close.textSize = 18f
         close.setPadding(dp(12), dp(6), dp(12), dp(6))
+        close.contentDescription = "إغلاق"
         close.setOnClickListener { buzz(it); hideDownloads() }
         head.addView(close)
         dlPanel.addView(head)
@@ -2128,150 +1753,6 @@ class MainActivity : AppCompatActivity() {
         dlEmpty.visibility = if (tasks.isEmpty()) View.VISIBLE else View.GONE
     }
 
-    inner class VideoAdapter : BaseAdapter() {
-        override fun getCount(): Int = shown.size
-        override fun getItem(position: Int): Any = shown[position]
-        override fun getItemId(position: Int): Long = shown[position].id
-        override fun hasStableIds(): Boolean = true
-
-        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-            val v = shown[position]
-            val ctx = this@MainActivity
-
-            val card = LinearLayout(ctx)
-            card.orientation = LinearLayout.VERTICAL
-            card.layoutDirection = View.LAYOUT_DIRECTION_RTL
-            card.setPadding(dp(8), dp(8), dp(8), dp(8))
-            card.background = GradientDrawable().apply {
-                setColor(Color.parseColor("#1A1A1A")); cornerRadius = dp(14).toFloat()
-            }
-            card.layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(8), dp(6), dp(8), dp(6)) }
-
-            // صورة كبيرة بعرض البطاقة كاملة (16:9)
-            val thumb = ImageView(ctx)
-            thumb.scaleType = ImageView.ScaleType.CENTER_CROP
-            thumb.clipToOutline = true
-            thumb.outlineProvider = object : ViewOutlineProvider() {
-                override fun getOutline(view: View, outline: Outline) {
-                    outline.setRoundRect(0, 0, view.width, view.height, dp(10).toFloat())
-                }
-            }
-            val thumbWidth = resources.displayMetrics.widthPixels - dp(32)
-            card.addView(thumb, LinearLayout.LayoutParams(thumbWidth, thumbWidth * 9 / 16))
-            loadThumb(v, thumb)
-
-            val bottom = LinearLayout(ctx)
-            bottom.orientation = LinearLayout.HORIZONTAL
-            bottom.gravity = Gravity.CENTER_VERTICAL
-            bottom.layoutDirection = View.LAYOUT_DIRECTION_RTL
-            card.addView(bottom, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
-
-            val info = LinearLayout(ctx)
-            info.orientation = LinearLayout.VERTICAL
-            info.gravity = Gravity.CENTER_VERTICAL
-            bottom.addView(info, LinearLayout.LayoutParams(0, -2, 1f))
-
-            val title = TextView(ctx)
-            title.text = v.title
-            title.setTextColor(Color.WHITE); title.textSize = 15f; title.typeface = fontBold
-            title.maxLines = 2; title.ellipsize = android.text.TextUtils.TruncateAt.END
-            info.addView(title)
-
-            val duration = TextView(ctx)
-            duration.text = fmt(v.duration)
-            duration.setTextColor(gray); duration.textSize = 12f
-            duration.setPadding(0, dp(4), 0, 0)
-            info.addView(duration)
-
-            val progress = prefs.getPosition(v.id)
-            if (progress > 0L && v.duration > 0L) {
-                val bar = ProgressBar(ctx, null, android.R.attr.progressBarStyleHorizontal)
-                bar.max = v.duration.toInt()
-                bar.progress = progress.toInt()
-                bar.progressTintList = android.content.res.ColorStateList.valueOf(red)
-                info.addView(bar, LinearLayout.LayoutParams(-1, dp(6)).apply { topMargin = dp(6) })
-            }
-
-            val menuBtn = ImageButton(ctx)
-            menuBtn.setImageDrawable(IconDrawable(IconDrawable.TRASH, gray))
-            menuBtn.background = null
-            menuBtn.isFocusable = false
-            menuBtn.setOnClickListener { buzz(it); showDeleteDialog(v) }
-            bottom.addView(menuBtn, LinearLayout.LayoutParams(dp(40), dp(40)))
-
-            applyFont(card)
-            return card
-        }
-    }
-
-    private fun loadThumb(v: VideoItem, iv: ImageView) {
-        iv.tag = v.id
-        val cached = cache.get(v.id)
-        if (cached != null) { iv.setImageBitmap(cached); return }
-        iv.setImageDrawable(GradientDrawable().apply { setColor(Color.parseColor("#2A2A2A")); cornerRadius = dp(8).toFloat() })
-
-        // إن كان هناك تحميل جارٍ لنفس الفيديو ننتظره بدل تكراره
-        val waiting = thumbWaiters[v.id]
-        if (waiting != null) { waiting.add(iv); return }
-        thumbWaiters[v.id] = mutableListOf(iv)
-
-        thumbPool.execute {
-            val bmp = try { makeThumb(v) } catch (_: Exception) { null }
-            ui.post {
-                val views = thumbWaiters.remove(v.id)
-                if (bmp != null) {
-                    cache.put(v.id, bmp)
-                    views?.forEach { if (it.tag == v.id) it.setImageBitmap(bmp) }
-                }
-            }
-        }
-    }
-
-    private fun makeThumb(v: VideoItem): Bitmap? {
-        val file = File(thumbDir, "${v.id}.jpg")
-        if (file.exists()) {
-            val bmp = BitmapFactory.decodeFile(file.path)
-            if (bmp != null) return bmp
-            file.delete()
-        }
-        var frame: Bitmap? = null
-        val r = MediaMetadataRetriever()
-        try {
-            r.setDataSource(this, v.uri)
-            frame = r.getFrameAtTime(1_000_000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                ?: r.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                ?: r.getFrameAtTime()
-        } catch (_: Exception) {
-        } finally {
-            try { r.release() } catch (_: Exception) {}
-        }
-        if (frame == null) return null
-        // قصّ من الوسط بنسبة 16:9 دون أي تشويه، بدقة الإطار الأصلي (بلا تكبير)
-        val ratio = thumbW.toFloat() / thumbH
-        val fw = frame.width; val fh = frame.height
-        val cropW: Int; val cropH: Int
-        if (fw.toFloat() / fh > ratio) { cropH = fh; cropW = (fh * ratio).toInt() }
-        else { cropW = fw; cropH = (fw / ratio).toInt() }
-        val sx = (fw - cropW) / 2; val sy = (fh - cropH) / 2
-        val outW = minOf(thumbW, cropW).coerceAtLeast(1)
-        val outH = (outW * 9 / 16).coerceAtLeast(1)
-        val scaled = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
-        Canvas(scaled).drawBitmap(
-            frame,
-            android.graphics.Rect(sx, sy, sx + cropW, sy + cropH),
-            android.graphics.Rect(0, 0, outW, outH),
-            Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG or Paint.DITHER_FLAG)
-        )
-        frame.recycle()
-        // كتابة ذرّية: ملف مؤقت ثم إعادة تسمية، فلا يُقرأ ملف ناقص أبدًا
-        val tmp = File(thumbDir, "${v.id}_${System.nanoTime()}.tmp")
-        try {
-            FileOutputStream(tmp).use { scaled.compress(Bitmap.CompressFormat.JPEG, 95, it) }
-            if (!tmp.renameTo(file)) tmp.delete()
-        } catch (_: Exception) { tmp.delete() }
-        return scaled
-    }
-
     private fun showDeleteDialog(v: VideoItem) {
         AlertDialog.Builder(this)
             .setTitle("حذف الفيديو")
@@ -2304,6 +1785,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** إعدادات بسيطة فقط (المجلد والتبويب). مواضع المشاهدة انتقلت إلى Room عبر PositionStore. */
     class Prefs(context: Context) {
         private val sp: SharedPreferences = context.getSharedPreferences("tube_pro", Context.MODE_PRIVATE)
 
@@ -2314,110 +1796,5 @@ class MainActivity : AppCompatActivity() {
         var lastTab: Int
             get() = sp.getInt("tab", 0)
             set(v) { sp.edit().putInt("tab", v).apply() }
-
-        fun savePosition(id: Long, pos: Long, dur: Long, watched: Boolean) {
-            val e = sp.edit()
-            e.putLong("pos_$id", pos)
-            if (watched) e.putBoolean("watched_$id", true)
-            e.apply()
-        }
-
-        fun getPosition(id: Long): Long = sp.getLong("pos_$id", 0L)
-        fun isWatched(id: Long): Boolean = sp.getBoolean("watched_$id", false)
-        fun removePosition(id: Long) {
-            sp.edit().remove("pos_$id").remove("watched_$id").apply()
-        }
-    }
-}
-
-class YoutubeTab(
-    private val activity: MainActivity,
-    private val getFolderPath: () -> String,
-    private val onReload: () -> Unit,
-    private val onPlay: (VideoItem) -> Unit,
-    private val onDownload: (String?) -> Unit
-) {
-    val view: FrameLayout = FrameLayout(activity)
-    private var web: WebView? = null
-    private var initialized = false
-    private var fab: ImageButton? = null
-
-    private fun isWatchUrl(url: String?): Boolean =
-        url != null && (url.contains("/watch") || url.contains("youtu.be/") || url.contains("/shorts/"))
-
-    private fun updateFab(url: String?) {
-        fab?.visibility = if (isWatchUrl(url)) View.VISIBLE else View.GONE
-    }
-
-    fun isInitialized(): Boolean = initialized
-
-    fun reload() { web?.reload() }
-
-    fun onShown() {
-        if (!initialized) {
-            initialized = true
-            setupWebView()
-        }
-        web?.onResume()
-    }
-
-    fun onHidden() {
-        web?.onPause()
-    }
-
-    fun handleBack(): Boolean {
-        val w = web ?: return false
-        if (w.canGoBack()) { w.goBack(); return true }
-        return false
-    }
-
-    private fun setupWebView() {
-        val w = WebView(activity)
-        web = w
-        w.settings.javaScriptEnabled = true
-        w.settings.domStorageEnabled = true
-        w.settings.mediaPlaybackRequiresUserGesture = false
-        w.settings.loadWithOverviewMode = true
-        w.settings.useWideViewPort = true
-
-        CookieManager.getInstance().setAcceptCookie(true)
-        CookieManager.getInstance().setAcceptThirdPartyCookies(w, true)
-
-        w.webChromeClient = object : WebChromeClient() {
-            override fun onProgressChanged(v: WebView?, newProgress: Int) {}
-        }
-        w.webViewClient = object : WebViewClient() {
-            @Suppress("OVERRIDE_DEPRECATION")
-            override fun doUpdateVisitedHistory(v: WebView?, url: String?, isReload: Boolean) {
-                super.doUpdateVisitedHistory(v, url, isReload)
-                updateFab(url)
-            }
-            override fun onPageFinished(v: WebView?, url: String?) {
-                super.onPageFinished(v, url)
-                updateFab(url)
-            }
-            override fun shouldOverrideUrlLoading(v: WebView?, url: String?): Boolean {
-                if (url != null && (url.contains("youtube.com/watch") || url.contains("youtu.be/"))) {
-                    v?.loadUrl(url)
-                    return true
-                }
-                return false
-            }
-        }
-        w.loadUrl("https://m.youtube.com")
-        view.addView(w, FrameLayout.LayoutParams(-1, -1))
-
-        val d = activity.resources.displayMetrics.density
-        val b = ImageButton(activity)
-        b.setImageDrawable(IconDrawable(IconDrawable.DOWNLOAD, Color.WHITE))
-        b.background = GradientDrawable().apply { setColor(Color.parseColor("#FF0000")); shape = GradientDrawable.OVAL }
-        b.elevation = 8 * d
-        val pad = (15 * d).toInt()
-        b.setPadding(pad, pad, pad, pad)
-        b.visibility = View.GONE
-        b.setOnClickListener { onDownload(w.url) }
-        val m = (16 * d).toInt()
-        view.addView(b, FrameLayout.LayoutParams((56 * d).toInt(), (56 * d).toInt(), Gravity.BOTTOM or Gravity.END).apply { setMargins(m, m, m, m) })
-        fab = b
     }
 }
