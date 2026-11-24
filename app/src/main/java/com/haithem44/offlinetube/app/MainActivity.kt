@@ -122,6 +122,7 @@ class MainActivity : AppCompatActivity() {
     private var touchStartY = 0f
     private var pulling = false
     private var firstResume = true
+    private var skipResumeReload = false
 
     private var folderPath: String = ""
     private var pendingDelete: VideoItem? = null
@@ -554,7 +555,7 @@ class MainActivity : AppCompatActivity() {
         folderBtn.setImageDrawable(IconDrawable(IconDrawable.FOLDER, navInactive))
         folderBtn.background = null
         folderBtn.contentDescription = "اختيار مجلد"
-        folderBtn.setOnClickListener { buzz(it); pickFolderLauncher.launch(null) }
+        folderBtn.setOnClickListener { buzz(it); skipResumeReload = true; pickFolderLauncher.launch(null) }
         logo.addView(folderBtn, LinearLayout.LayoutParams(dp(40), dp(40)))
 
         val dlBox = FrameLayout(this)
@@ -703,7 +704,7 @@ class MainActivity : AppCompatActivity() {
                 val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
                 imm.showSoftInput(searchBox, InputMethodManager.SHOW_IMPLICIT)
             }
-            2 -> pickFolderLauncher.launch(null)
+            2 -> { skipResumeReload = true; pickFolderLauncher.launch(null) }
             3 -> selectTab(YT_TAB)
         }
         for (ref in navRefs) {
@@ -737,7 +738,7 @@ class MainActivity : AppCompatActivity() {
         updateContinueHeader()
         adapter.submitList(shown.map { VideoRow(it, store.getPosition(it.id)) })
         emptyText.text = if (shown.isEmpty()) {
-            if (tab == 1) "لا توجد فيديوهات قيد المشاهدة" else "لا توجد فيديوهات"
+            if (folderPath.isEmpty()) "اختر مجلداً أولاً من أيقونة 📁" else if (tab == 1) "لا توجد فيديوهات قيد المشاهدة" else "لا توجد فيديوهات"
         } else ""
         emptyText.visibility = if (shown.isEmpty()) View.VISIBLE else View.GONE
         updateNavForTab()
@@ -768,6 +769,7 @@ class MainActivity : AppCompatActivity() {
     @Suppress("DEPRECATION")
     private fun scanMediaFolders() {
         try {
+            if (folderPath.isEmpty()) return
             val exts = setOf("mp4", "mkv", "webm", "3gp", "mov", "avi", "m4v")
             val dirs = ArrayList<File>()
             val depth: Int
@@ -807,7 +809,6 @@ class MainActivity : AppCompatActivity() {
         if (refreshing) return
         refreshing = true
         refreshManual = manual
-        if (manual) shuffleNext = true
         if (manual) {
             refreshBar.visibility = View.VISIBLE
             setSpinning(true)
@@ -857,7 +858,7 @@ class MainActivity : AppCompatActivity() {
     @Suppress("DEPRECATION")
     private fun folderSelection(): Pair<String?, Array<String>?> {
         val dir = folderPath.trimEnd('/')
-        if (dir.isEmpty()) return Pair(null, null)
+        if (dir.isEmpty()) return Pair("0=1", null)
         val esc = dir.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         val col = MediaStore.Video.Media.DATA
         return if (includeSubfolders) {
@@ -921,7 +922,7 @@ class MainActivity : AppCompatActivity() {
                     refreshing = false
                     refreshBar.visibility = View.GONE
                     setSpinning(false)
-                    if (refreshManual) Toast.makeText(this@MainActivity, "تم خلط الفيديوهات 🔀  (" + all.size + " فيديو)", Toast.LENGTH_SHORT).show()
+                    if (refreshManual) Toast.makeText(this@MainActivity, "تم التحديث  (" + all.size + " فيديو)", Toast.LENGTH_SHORT).show()
                 }
                 restorePendingPlayer()
             }
@@ -1481,10 +1482,11 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (!firstResume) {
+        if (!firstResume && !skipResumeReload) {
             if (playerRoot.visibility == View.VISIBLE) loadVideos() else reloadVideos(false)
         }
         firstResume = false
+        skipResumeReload = false
         if (!observerRegistered) {
             try {
                 contentResolver.registerContentObserver(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true, mediaObserver)
