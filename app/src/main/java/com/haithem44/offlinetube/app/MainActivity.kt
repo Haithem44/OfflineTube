@@ -1060,6 +1060,14 @@ class MainActivity : AppCompatActivity() {
         commentBadge.setOnClickListener { buzz(it); toggleComments() }
         timeRow.addView(commentBadge, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(8) })
 
+        // الزر الجديد: الرجوع إلى القائمة الرئيسية (بجانب زر التكبير)
+        val homeBtn = ImageButton(this)
+        homeBtn.setImageDrawable(IconDrawable(IconDrawable.HOME, Color.WHITE))
+        homeBtn.background = null
+        homeBtn.contentDescription = "الرئيسية"
+        homeBtn.setOnClickListener { buzz(it); closePlayer(); selectTab(0) }
+        timeRow.addView(homeBtn, LinearLayout.LayoutParams(dp(36), dp(36)).apply { marginStart = dp(4) })
+
         fsBtn = ImageButton(this)
         fsBtn.setImageDrawable(IconDrawable(IconDrawable.EXPAND, Color.WHITE))
         fsBtn.background = null
