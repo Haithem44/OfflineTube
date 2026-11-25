@@ -119,6 +119,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var refreshBar: TextView
     private var refreshing = false
+    private var refreshStartedAt = 0L
     private var touchStartY = 0f
     private var pulling = false
     private var firstResume = true
@@ -800,28 +801,55 @@ class MainActivity : AppCompatActivity() {
         } catch (_: Exception) {}
     }
 
+    /** يُنهي حالة التحديث دائمًا (إخفاء الشريط + إيقاف الدوران) حتى لا يتعطل الزر */
+    private fun finishRefresh() {
+        if (!refreshing) return
+        refreshing = false
+        refreshBar.visibility = View.GONE
+        setSpinning(false)
+        if (refreshManual) Toast.makeText(this@MainActivity, "تم التحديث  (" + all.size + " فيديو)", Toast.LENGTH_SHORT).show()
+    }
+
     private fun reloadVideos(manual: Boolean = true) {
         if (tab == YT_TAB && manual) {
             ytTab.reload()
             Toast.makeText(this, "تم تحديث صفحة YouTube", Toast.LENGTH_SHORT).show()
             return
         }
-        if (refreshing) return
+        if (refreshing) {
+            // إن علقت حالة التحديث أكثر من 8 ثوانٍ نفكّها بدل تجاهل الضغط
+            if (System.currentTimeMillis() - refreshStartedAt < 8000) return
+            refreshing = false
+            refreshBar.visibility = View.GONE
+            setSpinning(false)
+        }
         refreshing = true
+        refreshStartedAt = System.currentTimeMillis()
         refreshManual = manual
         if (manual) {
+            shuffleNext = true
             refreshBar.visibility = View.VISIBLE
             setSpinning(true)
         }
         val started = System.currentTimeMillis()
-        pool.execute {
-            scanMediaFolders()
-            if (manual) {
-                val wait = 700L - (System.currentTimeMillis() - started)
-                if (wait > 0) { try { Thread.sleep(wait) } catch (_: Exception) {} }
+        try {
+            pool.execute {
+                scanMediaFolders()
+                if (manual) {
+                    val wait = 700L - (System.currentTimeMillis() - started)
+                    if (wait > 0) { try { Thread.sleep(wait) } catch (_: Exception) {} }
+                }
+                ui.post { loadVideos() }
             }
-            ui.post { loadVideos() }
+        } catch (_: Exception) {
+            refreshing = false
+            refreshBar.visibility = View.GONE
+            setSpinning(false)
         }
+        // شبكة أمان: إن لم تنتهِ العملية خلال 10 ثوانٍ نُنهي حالة التحديث
+        ui.postDelayed({
+            if (refreshing && System.currentTimeMillis() - refreshStartedAt >= 9500) finishRefresh()
+        }, 10000)
     }
 
     private fun afterDeleted(v: VideoItem) {
@@ -901,30 +929,29 @@ class MainActivity : AppCompatActivity() {
             ui.post {
                 // نتيجة قديمة سبقتها نتيجة أحدث: نتجاهلها
                 if (gen != loadGen) return@post
-                // زر التحديث: خلط جديد للترتيب
-                val didShuffle = shuffleNext
-                if (shuffleNext) {
-                    shuffleNext = false
-                    shuffleRank.clear()
-                    result.shuffled().forEachIndexed { i, item -> shuffleRank[item.id] = i }
+                try {
+                    // زر التحديث: خلط جديد للترتيب
+                    val didShuffle = shuffleNext
+                    if (shuffleNext) {
+                        shuffleNext = false
+                        shuffleRank.clear()
+                        result.shuffled().forEachIndexed { i, item -> shuffleRank[item.id] = i }
+                    }
+                    // يبقى الخلط ثابتًا في التحديثات التلقائية؛ والفيديو الجديد يظهر في الأعلى
+                    val ordered: List<VideoItem> =
+                        if (shuffleRank.isEmpty()) result else result.sortedBy { shuffleRank[it.id] ?: -1 }
+                    // لا نعيد بناء القائمة إن لم يتغير شيء (يمنع الوميض)
+                    if (!loadedOnce || ordered != all || didShuffle) {
+                        all.clear(); all.addAll(ordered)
+                        loadedOnce = true
+                        applyFilter()
+                        if (didShuffle) recycler.scrollToPosition(0)
+                    }
+                } catch (_: Exception) {
+                } finally {
+                    finishRefresh()
                 }
-                // يبقى الخلط ثابتًا في التحديثات التلقائية؛ والفيديو الجديد يظهر في الأعلى
-                val ordered: List<VideoItem> =
-                    if (shuffleRank.isEmpty()) result else result.sortedBy { shuffleRank[it.id] ?: -1 }
-                // لا نعيد بناء القائمة إن لم يتغير شيء (يمنع الوميض)
-                if (!loadedOnce || ordered != all) {
-                    all.clear(); all.addAll(ordered)
-                    loadedOnce = true
-                    applyFilter()
-                    if (didShuffle) recycler.scrollToPosition(0)
-                }
-                if (refreshing) {
-                    refreshing = false
-                    refreshBar.visibility = View.GONE
-                    setSpinning(false)
-                    if (refreshManual) Toast.makeText(this@MainActivity, "تم التحديث  (" + all.size + " فيديو)", Toast.LENGTH_SHORT).show()
-                }
-                restorePendingPlayer()
+                try { restorePendingPlayer() } catch (_: Exception) {}
             }
         }
     }
