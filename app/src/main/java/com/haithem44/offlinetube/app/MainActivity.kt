@@ -114,6 +114,14 @@ class MainActivity : AppCompatActivity() {
     private lateinit var ytTab: YoutubeTab
     private lateinit var ytPanel: FrameLayout
     private val YT_TAB = 5
+    private val SHORTS_TAB = 4
+
+    /** أقصى مدة لفيديو Shorts: 3 دقائق بالميلي ثانية */
+    private val SHORTS_MAX_MS = 180_000L
+
+    /** Short = مدته من 1ms إلى 3 دقائق (شاملة). الفيديو ذو المدة 0 (غير مفهرس بعد) لا يُعدّ Short. */
+    private fun isShort(v: VideoItem): Boolean = v.duration in 1L..SHORTS_MAX_MS
+
     private var tab = 0
     private var query = ""
 
@@ -728,13 +736,15 @@ class MainActivity : AppCompatActivity() {
         if (tab == YT_TAB) return
         shown.clear()
         val q = query.trim().lowercase(Locale.getDefault())
-        val base = if (q.isEmpty()) all else all.filter { it.title.lowercase(Locale.getDefault()).contains(q) }
+        val filtered = if (q.isEmpty()) all else all.filter { it.title.lowercase(Locale.getDefault()).contains(q) }
+        // Shorts (≤ 3 دقائق) تظهر في تبويب Shorts فقط، وما زاد عنها يظهر في باقي التبويبات
+        val base = if (tab == SHORTS_TAB) filtered.filter { isShort(it) } else filtered.filter { !isShort(it) }
         when (tab) {
             0 -> shown.addAll(base)
             1 -> shown.addAll(base.filter { val pos = store.getPosition(it.id); pos > 0L && pos < it.duration })
             2 -> shown.addAll(base.sortedByDescending { it.duration })
             3 -> shown.addAll(base.filter { store.isWatched(it.id) })
-            4 -> shown.addAll(base.filter { it.duration in 1L..60_000L })
+            SHORTS_TAB -> shown.addAll(base)
         }
         updateContinueHeader()
         adapter.submitList(shown.map { VideoRow(it, store.getPosition(it.id)) })
