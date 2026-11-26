@@ -23,6 +23,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.text.Editable
@@ -58,6 +59,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -882,11 +884,23 @@ class MainActivity : AppCompatActivity() {
             }
         }
         loadVideos()
+        requestNotificationPermissionIfNeeded()
+    }
+
+    /** إذن الإشعارات (أندرويد 13+): لازم لظهور إشعار التشغيل في الخلفية */
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 101)
+        }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 100) loadVideos()
+        if (requestCode == 100) {
+            loadVideos()
+            requestNotificationPermissionIfNeeded()
+        }
     }
 
     /** true = يشمل المجلدات الفرعية داخل المجلد المختار، false = المجلد نفسه فقط */
@@ -985,6 +999,7 @@ class MainActivity : AppCompatActivity() {
         surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {}
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {}
+            // عند إطفاء الشاشة يُدمَّر السطح: الصوت يستمر، والصورة تعود في onResume
             override fun surfaceDestroyed(holder: SurfaceHolder) {}
         })
         aspectLayout.addView(surfaceView, FrameLayout.LayoutParams(-1, -1))
@@ -1331,6 +1346,19 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ───────────── التشغيل في الخلفية (الشاشة مطفأة) ─────────────
+
+    private fun startPlaybackService(title: String) {
+        try {
+            val i = Intent(this, PlaybackService::class.java).putExtra("title", title)
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(i) else startService(i)
+        } catch (_: Exception) {}
+    }
+
+    private fun stopPlaybackService() {
+        try { stopService(Intent(this, PlaybackService::class.java)) } catch (_: Exception) {}
+    }
+
     private fun openPlayer(v: VideoItem) {
         current = v
         playerTitle.text = v.title
@@ -1350,6 +1378,15 @@ class MainActivity : AppCompatActivity() {
         val p = player ?: ExoPlayer.Builder(this)
             .setSeekBackIncrementMs(10_000L)
             .setSeekForwardIncrementMs(10_000L)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(C.USAGE_MEDIA)
+                    .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                    .build(),
+                true
+            )
+            .setHandleAudioBecomingNoisy(true)
+            .setWakeMode(C.WAKE_MODE_LOCAL)
             .build()
             .also { player = it }
 
@@ -1367,6 +1404,8 @@ class MainActivity : AppCompatActivity() {
         if (savedPos > 0L) {
             p.seekTo(savedPos)
         }
+
+        startPlaybackService(v.title)
 
         showControls()
         if (pendingRestoreComments) {
@@ -1389,6 +1428,7 @@ class MainActivity : AppCompatActivity() {
         current = null
         commentsPanel.visibility = View.GONE
         commentsOpen = false
+        stopPlaybackService()
         applyFilter()
     }
 
@@ -1505,20 +1545,24 @@ class MainActivity : AppCompatActivity() {
         super.onPause()
         val p = player; val c = current
         if (p != null && c != null && prepared) saveProgress(p, c)
-        val playing = p != null && p.isPlaying
-        var inPip = false
-        if (playing && playerRoot.visibility == View.VISIBLE && Build.VERSION.SDK_INT >= 26) {
+        // لا نوقف التشغيل هنا: الخدمة الأمامية تُبقيه يعمل والشاشة مطفأة.
+        // نافذة PiP فقط عند الخروج من التطبيق والشاشة مضيئة (وليس عند القفل).
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (p != null && p.isPlaying && playerRoot.visibility == View.VISIBLE &&
+            pm.isInteractive && Build.VERSION.SDK_INT >= 26) {
             try {
                 enterPictureInPictureMode(PictureInPictureParams.Builder()
                     .setAspectRatio(Rational(16, 9)).build())
-                inPip = true
             } catch (_: Exception) {}
         }
-        if (playing && !inPip) p?.pause()
     }
 
     override fun onResume() {
         super.onResume()
+        // السطح يُدمَّر عند إطفاء الشاشة، فنعيد ربطه لتعود الصورة
+        if (playerRoot.visibility == View.VISIBLE) {
+            try { player?.setVideoSurfaceView(surfaceView) } catch (_: Exception) {}
+        }
         if (!firstResume && !skipResumeReload) {
             if (playerRoot.visibility == View.VISIBLE) loadVideos() else reloadVideos(false)
         }
@@ -1534,9 +1578,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStop() {
         super.onStop()
-        if (!isInPictureInPictureMode) {
-            player?.pause()
-        }
+        // أُزيل player?.pause() ليستمر الصوت عند إغلاق الشاشة
     }
 
     override fun onDestroy() {
@@ -1548,6 +1590,7 @@ class MainActivity : AppCompatActivity() {
         try { contentResolver.unregisterContentObserver(mediaObserver) } catch (_: Exception) {}
         player?.release()
         player = null
+        stopPlaybackService()
         ytTab.onDestroy()
     }
 
